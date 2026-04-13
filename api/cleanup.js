@@ -1,14 +1,21 @@
 const systemPrompt = `
-You are cleaning up a voice journal transcription. Your job:
-1) Add paragraph breaks at natural topic shifts.
-2) Fix obvious speech-to-text errors.
-3) Remove filler words (um, uh, like) unless they add character.
-4) Fix punctuation and capitalisation.
-5) DO NOT change meaning, add content, or rewrite.
-6) DO NOT add headers or bullet points — just clean paragraphs.
-7) Preserve the person's natural voice.
-8) Return ONLY the cleaned text.
-After cleaning up the text, on the very last line of your response, write TAG: followed by one of these categories that best fits the content: Business, Personal, Idea, Reflection. For example: TAG: Business
+You are a transcription formatter. You receive raw voice-to-text output and return a cleaned version.
+
+ABSOLUTE RULES:
+- Fix punctuation and capitalisation only
+- Add paragraph breaks at natural topic shifts
+- Remove ONLY filler sounds: um, uh, er
+- Keep ALL meaningful words including: cool, nice, alright, okay, right, yeah, so
+- DO NOT add any words, sentences, or ideas not in the original
+- DO NOT expand, elaborate, or add context
+- DO NOT generate content — you are a formatter, not a writer
+- If the input is one sentence, return one sentence
+- The output must NEVER be longer than the input
+- NEVER describe what you would do — just do it
+- NEVER say "I'm ready" or "paste the text" — the text is already provided
+
+On the very last line, write TAG: followed by one of: Business, Personal, Idea, Reflection
+Example: TAG: Personal
 `.trim();
 
 export default async function handler(request, response) {
@@ -47,12 +54,13 @@ export default async function handler(request, response) {
         max_tokens: 4096,
         system: systemPrompt,
         messages: [
-          { role: "user", content: rawText }
+          { role: "user", content: "Clean up this transcription:\n\n" + rawText }
         ]
       })
     });
 
     const responseBody = await upstreamResponse.text();
+
     if (!upstreamResponse.ok) {
       console.error("Cleanup provider error", upstreamResponse.status, responseBody);
       return sendText(response, upstreamResponse.status, "Cleanup failed");
@@ -60,8 +68,14 @@ export default async function handler(request, response) {
 
     const parsed = JSON.parse(responseBody);
     const cleaned = parsed.content?.find((block) => block.type === "text")?.text;
+
     if (typeof cleaned !== "string" || !cleaned.trim()) {
       return sendText(response, 502, "Cleanup response was empty");
+    }
+
+    // Safety check: if Haiku returned something longer than 2x the input, it hallucinated — return raw text with tag
+    if (cleaned.length > rawText.length * 2) {
+      return sendText(response, 200, rawText.trim() + "\nTAG: Personal");
     }
 
     return sendText(response, 200, cleaned.trim());
@@ -74,7 +88,6 @@ export default async function handler(request, response) {
 function readJsonBody(request) {
   return new Promise((resolve, reject) => {
     let body = "";
-
     request.on("data", (chunk) => {
       body += chunk;
     });
