@@ -22,12 +22,12 @@ const systemPrompt = `
 You analyse cleaned journal text and return structured metadata only.
 
 Rules:
-- Topic tags must be 1 to 5 items.
-- Topic tags must be specific and concrete, never generic.
-- Good tags: "matcha", "work stress", "Parrot", "sleep".
-- Bad tags: "life", "thoughts".
 - Summary must be exactly one concise sentence.
 - For journal entries, include mood and moodIntensity.
+- For journal entries, include secondaryMoods as an array with zero to two items.
+- Each secondary mood must have a confidence of at least 0.75.
+- If there are no clear secondary moods, return an empty array.
+- Secondary moods may be inferred from tone and context, but do not over-interpret weak signals.
 - For note entries, do not include mood or moodIntensity.
 - For journal mood, choose exactly one allowed mood from the provided schema.
 - For moodIntensity, use an integer from 1 to 5.
@@ -42,15 +42,6 @@ const journalTool = {
     type: "object",
     additionalProperties: false,
     properties: {
-      topicTags: {
-        type: "array",
-        minItems: 1,
-        maxItems: 5,
-        items: {
-          type: "string",
-          minLength: 1
-        }
-      },
       mood: {
         type: "string",
         enum: JOURNAL_MOODS
@@ -60,12 +51,32 @@ const journalTool = {
         minimum: 1,
         maximum: 5
       },
+      secondaryMoods: {
+        type: "array",
+        maxItems: 2,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            mood: {
+              type: "string",
+              enum: JOURNAL_MOODS
+            },
+            confidence: {
+              type: "number",
+              minimum: 0.75,
+              maximum: 1
+            }
+          },
+          required: ["mood", "confidence"]
+        }
+      },
       summary: {
         type: "string",
         minLength: 1
       }
     },
-    required: ["topicTags", "mood", "moodIntensity", "summary"]
+    required: ["mood", "moodIntensity", "secondaryMoods", "summary"]
   }
 };
 
@@ -76,21 +87,12 @@ const noteTool = {
     type: "object",
     additionalProperties: false,
     properties: {
-      topicTags: {
-        type: "array",
-        minItems: 1,
-        maxItems: 5,
-        items: {
-          type: "string",
-          minLength: 1
-        }
-      },
       summary: {
         type: "string",
         minLength: 1
       }
     },
-    required: ["topicTags", "summary"]
+    required: ["summary"]
   }
 };
 
@@ -204,19 +206,19 @@ function validateJournalAnalysis(value) {
     return null;
   }
 
-  const topicTags = normalizeTopicTags(value.topicTags);
   const mood = typeof value.mood === "string" ? value.mood.trim() : "";
   const moodIntensity = value.moodIntensity;
+  const secondaryMoods = normalizeSecondaryMoods(value.secondaryMoods);
   const summary = normalizeSummary(value.summary);
 
-  if (!topicTags || !JOURNAL_MOODS.includes(mood) || !Number.isInteger(moodIntensity) || moodIntensity < 1 || moodIntensity > 5 || !summary) {
+  if (!JOURNAL_MOODS.includes(mood) || !Number.isInteger(moodIntensity) || moodIntensity < 1 || moodIntensity > 5 || !secondaryMoods || !summary) {
     return null;
   }
 
   return {
-    topicTags,
     mood,
     moodIntensity,
+    secondaryMoods,
     summary
   };
 }
@@ -226,33 +228,15 @@ function validateNoteAnalysis(value) {
     return null;
   }
 
-  const topicTags = normalizeTopicTags(value.topicTags);
   const summary = normalizeSummary(value.summary);
 
-  if (!topicTags || !summary) {
+  if (!summary) {
     return null;
   }
 
   return {
-    topicTags,
     summary
   };
-}
-
-function normalizeTopicTags(value) {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 5) {
-    return null;
-  }
-
-  const normalized = value
-    .map((item) => (typeof item === "string" ? item.trim() : ""))
-    .filter(Boolean);
-
-  if (normalized.length !== value.length) {
-    return null;
-  }
-
-  return normalized;
 }
 
 function normalizeSummary(value) {
@@ -261,6 +245,31 @@ function normalizeSummary(value) {
   }
 
   return value.trim();
+}
+
+function normalizeSecondaryMoods(value) {
+  if (!Array.isArray(value) || value.length > 2) {
+    return null;
+  }
+
+  const normalized = [];
+
+  for (const item of value) {
+    if (!isPlainObject(item)) {
+      return null;
+    }
+
+    const mood = typeof item.mood === "string" ? item.mood.trim() : "";
+    const confidence = item.confidence;
+
+    if (!JOURNAL_MOODS.includes(mood) || typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0.75 || confidence > 1) {
+      return null;
+    }
+
+    normalized.push({ mood, confidence });
+  }
+
+  return normalized;
 }
 
 function isPlainObject(value) {
