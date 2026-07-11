@@ -137,7 +137,7 @@ export default async function handler(request, response) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.2,
         system: systemPrompt,
@@ -153,7 +153,7 @@ export default async function handler(request, response) {
     const responseBody = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
       console.error("Ask provider error", upstreamResponse.status, responseBody);
-      return sendAskFailure(response, providerErrorDetail(upstreamResponse.status, responseBody));
+      return sendAskFailure(response);
     }
 
     const parsed = JSON.parse(responseBody);
@@ -161,22 +161,20 @@ export default async function handler(request, response) {
     const answer = toolUse?.input;
 
     if (!answer || typeof answer !== "object") {
-      const detail = `Anthropic ${upstreamResponse.status}: missing ${answerTool.name} tool output (stop_reason: ${parsed.stop_reason || "unknown"})`;
       console.error("Ask response missing tool output", upstreamResponse.status, parsed.stop_reason || "unknown");
-      return sendAskFailure(response, detail);
+      return sendAskFailure(response);
     }
 
     const validated = validateAnswer(answer, allowedEntryIDs);
     if (!validated) {
-      const detail = `Anthropic ${upstreamResponse.status}: ${answerTool.name} output failed validation`;
       console.error("Ask response failed validation", upstreamResponse.status);
-      return sendAskFailure(response, detail);
+      return sendAskFailure(response);
     }
 
     return sendJson(response, 200, validated);
   } catch (error) {
     console.error("Ask proxy failed", formatCaughtError(error));
-    return sendAskFailure(response, exceptionDetail(error));
+    return sendAskFailure(response);
   }
 }
 
@@ -192,7 +190,7 @@ async function streamAnswer(response, apiKey, history, entries, question, allowe
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1024,
         temperature: 0.2,
         stream: true,
@@ -202,7 +200,7 @@ async function streamAnswer(response, apiKey, history, entries, question, allowe
     });
   } catch (error) {
     console.error("Ask streaming request failed", formatCaughtError(error));
-    return sendAskFailure(response, exceptionDetail(error));
+    return sendAskFailure(response);
   }
 
   if (!upstreamResponse.ok) {
@@ -213,13 +211,12 @@ async function streamAnswer(response, apiKey, history, entries, question, allowe
       console.error("Ask streaming provider error body read failed", upstreamResponse.status, formatCaughtError(error));
     }
     console.error("Ask streaming provider error", upstreamResponse.status, responseBody);
-    return sendAskFailure(response, providerErrorDetail(upstreamResponse.status, responseBody));
+    return sendAskFailure(response);
   }
 
   if (!upstreamResponse.body) {
-    const detail = `Anthropic ${upstreamResponse.status}: streaming response body unavailable`;
     console.error("Ask streaming response body unavailable", upstreamResponse.status);
-    return sendAskFailure(response, detail);
+    return sendAskFailure(response);
   }
 
   response.statusCode = 200;
@@ -359,28 +356,8 @@ function parseCitationTail(value, allowedEntryIDs) {
   }
 }
 
-// TODO: remove after debugging
-function sendAskFailure(response, detail) {
-  return sendJson(response, 502, { error: { message: "Ask failed", detail } });
-}
-
-function providerErrorDetail(status, responseBody) {
-  let message = responseBody.trim();
-
-  try {
-    const parsed = JSON.parse(responseBody);
-    if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) {
-      message = parsed.error.message.trim();
-    }
-  } catch {
-    // The raw provider body is the most useful fallback detail.
-  }
-
-  return `Anthropic ${status}: ${message || "Unknown provider error"}`;
-}
-
-function exceptionDetail(error) {
-  return `Exception: ${error instanceof Error ? error.message : String(error)}`;
+function sendAskFailure(response) {
+  return sendJson(response, 502, { error: { message: "Ask failed" } });
 }
 
 function formatCaughtError(error) {

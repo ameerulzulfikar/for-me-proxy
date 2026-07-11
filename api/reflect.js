@@ -78,7 +78,7 @@ export default async function handler(request, response) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
+        model: "claude-sonnet-4-6",
         max_tokens: 1400,
         temperature: 0.2,
         system: systemPrompt,
@@ -104,7 +104,7 @@ export default async function handler(request, response) {
     const responseText = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
       console.error("Reflection provider error", upstreamResponse.status, responseText);
-      return sendReflectionFailure(response, providerErrorDetail(upstreamResponse.status, responseText));
+      return sendReflectionFailure(response);
     }
 
     const responseBody = JSON.parse(responseText);
@@ -112,40 +112,19 @@ export default async function handler(request, response) {
     const reflection = validateReflection(toolUse?.input);
 
     if (!reflection) {
-      const detail = `Anthropic ${upstreamResponse.status}: ${reflectionTool.name} output missing or failed validation (stop_reason: ${responseBody.stop_reason || "unknown"})`;
       console.error("Reflection response missing or failed tool validation", upstreamResponse.status, responseBody.stop_reason || "unknown");
-      return sendReflectionFailure(response, detail);
+      return sendReflectionFailure(response);
     }
 
     return sendJson(response, 200, reflection);
   } catch (error) {
     console.error("Reflection proxy failed", formatCaughtError(error));
-    return sendReflectionFailure(response, exceptionDetail(error));
+    return sendReflectionFailure(response);
   }
 }
 
-// TODO: remove after debugging
-function sendReflectionFailure(response, detail) {
-  return sendJson(response, 502, { error: { message: "Reflection failed", detail } });
-}
-
-function providerErrorDetail(status, responseBody) {
-  let message = responseBody.trim();
-
-  try {
-    const parsed = JSON.parse(responseBody);
-    if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) {
-      message = parsed.error.message.trim();
-    }
-  } catch {
-    // The raw provider body is the most useful fallback detail.
-  }
-
-  return `Anthropic ${status}: ${message || "Unknown provider error"}`;
-}
-
-function exceptionDetail(error) {
-  return `Exception: ${error instanceof Error ? error.message : String(error)}`;
+function sendReflectionFailure(response) {
+  return sendJson(response, 502, { error: { message: "Reflection failed" } });
 }
 
 function formatCaughtError(error) {
