@@ -152,7 +152,8 @@ export default async function handler(request, response) {
 
     const responseBody = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
-      return sendJson(response, 502, { error: { message: "Ask failed" } });
+      console.error("Ask provider error", upstreamResponse.status, responseBody);
+      return sendAskFailure(response, providerErrorDetail(upstreamResponse.status, responseBody));
     }
 
     const parsed = JSON.parse(responseBody);
@@ -160,17 +161,22 @@ export default async function handler(request, response) {
     const answer = toolUse?.input;
 
     if (!answer || typeof answer !== "object") {
-      return sendJson(response, 502, { error: { message: "Ask failed" } });
+      const detail = `Anthropic ${upstreamResponse.status}: missing ${answerTool.name} tool output (stop_reason: ${parsed.stop_reason || "unknown"})`;
+      console.error("Ask response missing tool output", upstreamResponse.status, parsed.stop_reason || "unknown");
+      return sendAskFailure(response, detail);
     }
 
     const validated = validateAnswer(answer, allowedEntryIDs);
     if (!validated) {
-      return sendJson(response, 502, { error: { message: "Ask failed" } });
+      const detail = `Anthropic ${upstreamResponse.status}: ${answerTool.name} output failed validation`;
+      console.error("Ask response failed validation", upstreamResponse.status);
+      return sendAskFailure(response, detail);
     }
 
     return sendJson(response, 200, validated);
-  } catch {
-    return sendJson(response, 502, { error: { message: "Ask failed" } });
+  } catch (error) {
+    console.error("Ask proxy failed", formatCaughtError(error));
+    return sendAskFailure(response, exceptionDetail(error));
   }
 }
 
@@ -194,12 +200,26 @@ async function streamAnswer(response, apiKey, history, entries, question, allowe
         messages: buildStreamingMessages(history, entries, question)
       })
     });
-  } catch {
-    return sendJson(response, 502, { error: { message: "Ask failed" } });
+  } catch (error) {
+    console.error("Ask streaming request failed", formatCaughtError(error));
+    return sendAskFailure(response, exceptionDetail(error));
   }
 
-  if (!upstreamResponse.ok || !upstreamResponse.body) {
-    return sendJson(response, 502, { error: { message: "Ask failed" } });
+  if (!upstreamResponse.ok) {
+    let responseBody = "";
+    try {
+      responseBody = await upstreamResponse.text();
+    } catch (error) {
+      console.error("Ask streaming provider error body read failed", upstreamResponse.status, formatCaughtError(error));
+    }
+    console.error("Ask streaming provider error", upstreamResponse.status, responseBody);
+    return sendAskFailure(response, providerErrorDetail(upstreamResponse.status, responseBody));
+  }
+
+  if (!upstreamResponse.body) {
+    const detail = `Anthropic ${upstreamResponse.status}: streaming response body unavailable`;
+    console.error("Ask streaming response body unavailable", upstreamResponse.status);
+    return sendAskFailure(response, detail);
   }
 
   response.statusCode = 200;
@@ -233,12 +253,15 @@ async function streamAnswer(response, apiKey, history, entries, question, allowe
         let event;
         try {
           event = JSON.parse(data);
-        } catch {
+        } catch (error) {
+          console.error("Ask streaming event parse failed", upstreamResponse.status, formatCaughtError(error));
           continue;
         }
 
         if (event.type === "error") {
-          writeSse(response, "error", { message: normalizeProviderError(event) });
+          const message = normalizeProviderError(event);
+          console.error("Ask streaming provider error", upstreamResponse.status, JSON.stringify(event.error || {}));
+          writeSse(response, "error", { message });
           streamFailed = true;
           break;
         }
@@ -257,7 +280,8 @@ async function streamAnswer(response, apiKey, history, entries, question, allowe
         break;
       }
     }
-  } catch {
+  } catch (error) {
+    console.error("Ask streaming proxy failed", formatCaughtError(error));
     writeSse(response, "error", { message: "Ask failed" });
     streamFailed = true;
   }
@@ -329,9 +353,38 @@ function parseCitationTail(value, allowedEntryIDs) {
       typeof id === "string" && allowedEntryIDs.has(id)
     ));
     return { answerTail, citedEntryIDs };
-  } catch {
+  } catch (error) {
+    console.error("Ask citation parse failed", formatCaughtError(error));
     return { answerTail, citedEntryIDs: [] };
   }
+}
+
+// TODO: remove after debugging
+function sendAskFailure(response, detail) {
+  return sendJson(response, 502, { error: { message: "Ask failed", detail } });
+}
+
+function providerErrorDetail(status, responseBody) {
+  let message = responseBody.trim();
+
+  try {
+    const parsed = JSON.parse(responseBody);
+    if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) {
+      message = parsed.error.message.trim();
+    }
+  } catch {
+    // The raw provider body is the most useful fallback detail.
+  }
+
+  return `Anthropic ${status}: ${message || "Unknown provider error"}`;
+}
+
+function exceptionDetail(error) {
+  return `Exception: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+function formatCaughtError(error) {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }
 
 function normalizeProviderError(event) {

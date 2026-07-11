@@ -121,22 +121,30 @@ export default async function handler(request, response) {
       })
     });
 
+    const responseText = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
+      console.error("Import overview provider error", upstreamResponse.status, responseText);
       return sendJson(response, 502, { error: { message: "Import overview failed" } });
     }
 
-    const responseBody = await upstreamResponse.json();
+    const responseBody = JSON.parse(responseText);
     const toolUse = responseBody.content?.find((block) => block.type === "tool_use" && block.name === overviewTool.name);
     const overview = validateOverview(toolUse?.input);
 
     if (!overview) {
+      console.error("Import overview response failed validation", upstreamResponse.status);
       return sendJson(response, 502, { error: { message: "Import overview failed" } });
     }
 
     return sendJson(response, 200, overview);
-  } catch {
+  } catch (error) {
+    console.error("Import overview proxy failed", formatCaughtError(error));
     return sendJson(response, 502, { error: { message: "Import overview failed" } });
   }
+}
+
+function formatCaughtError(error) {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }
 
 function sanitizeNotes(notes) {

@@ -68,6 +68,7 @@ export default async function handler(request, response) {
     const responseBody = await upstreamResponse.text();
 
     if (!upstreamResponse.ok) {
+      console.error("Cleanup provider error", upstreamResponse.status, responseBody);
       return sendText(response, upstreamResponse.status, "Cleanup failed");
     }
 
@@ -84,7 +85,12 @@ export default async function handler(request, response) {
     }
 
     return sendText(response, 200, cleaned.trim());
-  } catch {
+  } catch (error) {
+    console.error("Cleanup proxy failed", formatCaughtError(error));
     return sendText(response, 502, "Cleanup failed");
   }
+}
+
+function formatCaughtError(error) {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }

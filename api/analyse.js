@@ -171,6 +171,7 @@ export default async function handler(request, response) {
 
     const responseBody = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
+      console.error("Analyse provider error", upstreamResponse.status, responseBody);
       return sendJson(response, 502, { error: { message: "Analysis failed" } });
     }
 
@@ -179,6 +180,7 @@ export default async function handler(request, response) {
     const analysis = toolUse?.input;
 
     if (!analysis || typeof analysis !== "object") {
+      console.error("Analyse response missing tool output", upstreamResponse.status);
       return sendJson(response, 502, { error: { message: "Analysis failed" } });
     }
 
@@ -187,13 +189,19 @@ export default async function handler(request, response) {
       : validateNoteAnalysis(analysis);
 
     if (!validated) {
+      console.error("Analyse response failed validation", upstreamResponse.status);
       return sendJson(response, 502, { error: { message: "Analysis failed" } });
     }
 
     return sendJson(response, 200, validated);
-  } catch {
+  } catch (error) {
+    console.error("Analyse proxy failed", formatCaughtError(error));
     return sendJson(response, 502, { error: { message: "Analysis failed" } });
   }
+}
+
+function formatCaughtError(error) {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }
 
 function buildUserPrompt(text, entryType) {

@@ -46,6 +46,7 @@ export default async function handler(request, response) {
 
     const responseBody = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
+      console.error("Embedding provider error", upstreamResponse.status, responseBody);
       return sendJson(response, 502, { error: { message: "Embedding failed" } });
     }
 
@@ -53,11 +54,17 @@ export default async function handler(request, response) {
     const embedding = parsed.data?.[0]?.embedding;
 
     if (!Array.isArray(embedding) || embedding.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
+      console.error("Embedding response was invalid", upstreamResponse.status);
       return sendJson(response, 502, { error: { message: "Embedding failed" } });
     }
 
     return sendJson(response, 200, { embedding });
-  } catch {
+  } catch (error) {
+    console.error("Embedding proxy failed", formatCaughtError(error));
     return sendJson(response, 502, { error: { message: "Embedding failed" } });
   }
+}
+
+function formatCaughtError(error) {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }

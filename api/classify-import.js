@@ -118,16 +118,27 @@ async function classifyNotes(apiKey, notes) {
       })
     });
 
+    const responseText = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
+      console.error("Classify import provider error", upstreamResponse.status, responseText);
       return [];
     }
 
-    const responseBody = await upstreamResponse.json();
+    const responseBody = JSON.parse(responseText);
     const text = responseBody.content?.find((block) => block.type === "text")?.text;
-    return parseResults(text, notes);
-  } catch {
+    const results = parseResults(text, notes);
+    if (results.length < notes.length) {
+      console.error("Classify import response was incomplete or invalid", upstreamResponse.status);
+    }
+    return results;
+  } catch (error) {
+    console.error("Classify import proxy failed", formatCaughtError(error));
     return [];
   }
+}
+
+function formatCaughtError(error) {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }
 
 function parseResults(value, notes) {
@@ -139,7 +150,8 @@ function parseResults(value, notes) {
   try {
     const normalized = value.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
     parsed = JSON.parse(normalized);
-  } catch {
+  } catch (error) {
+    console.error("Classify import response parse failed", formatCaughtError(error));
     return [];
   }
 

@@ -51,6 +51,9 @@ export default async function handler(request, response) {
     });
 
     const responseBody = await upstreamResponse.text();
+    if (!upstreamResponse.ok) {
+      console.error("Transcription provider error", upstreamResponse.status, responseBody);
+    }
     response.statusCode = upstreamResponse.status;
     response.setHeader("Content-Type", upstreamResponse.headers.get("content-type") || "application/json");
     return response.end(responseBody);
@@ -59,6 +62,11 @@ export default async function handler(request, response) {
       return sendText(response, 413, "Audio too large");
     }
 
+    console.error("Transcription proxy failed", formatCaughtError(error));
     return sendText(response, 502, "Transcription failed");
   }
+}
+
+function formatCaughtError(error) {
+  return error instanceof Error ? error.stack || error.message : String(error);
 }
