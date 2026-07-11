@@ -1,3 +1,5 @@
+import { LIMITS, isPlainObject, readJsonBody, sendJson } from "./_validation.js";
+
 export default async function handler(request, response) {
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
@@ -16,9 +18,17 @@ export default async function handler(request, response) {
     return sendJson(response, 400, { error: { message: "Invalid JSON" } });
   }
 
+  if (!isPlainObject(body)) {
+    return sendJson(response, 400, { error: { message: "Invalid request body" } });
+  }
+
   const text = typeof body.text === "string" ? body.text.trim() : "";
   if (!text) {
     return sendJson(response, 400, { error: { message: "Missing text" } });
+  }
+
+  if (typeof body.text === "string" && body.text.length > LIMITS.embedText) {
+    return sendJson(response, 413, { error: { message: "Text too large" } });
   }
 
   try {
@@ -36,7 +46,6 @@ export default async function handler(request, response) {
 
     const responseBody = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
-      console.error("Embedding provider error", upstreamResponse.status, responseBody);
       return sendJson(response, 502, { error: { message: "Embedding failed" } });
     }
 
@@ -44,37 +53,11 @@ export default async function handler(request, response) {
     const embedding = parsed.data?.[0]?.embedding;
 
     if (!Array.isArray(embedding) || embedding.some((value) => typeof value !== "number" || !Number.isFinite(value))) {
-      console.error("Embedding response was invalid", responseBody);
       return sendJson(response, 502, { error: { message: "Embedding failed" } });
     }
 
     return sendJson(response, 200, { embedding });
-  } catch (error) {
-    console.error("Embedding proxy failed", error);
+  } catch {
     return sendJson(response, 502, { error: { message: "Embedding failed" } });
   }
-}
-
-function readJsonBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-
-    request.on("data", (chunk) => {
-      body += chunk;
-    });
-    request.on("end", () => {
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(error);
-      }
-    });
-    request.on("error", reject);
-  });
-}
-
-function sendJson(response, statusCode, payload) {
-  response.statusCode = statusCode;
-  response.setHeader("Content-Type", "application/json; charset=utf-8");
-  return response.end(JSON.stringify(payload));
 }

@@ -1,3 +1,5 @@
+import { LIMITS, readJsonBody, sendText } from "./_validation.js";
+
 const systemPrompt = `
 You are a transcription formatter. You receive raw voice-to-text output and return a cleaned version.
 
@@ -41,6 +43,10 @@ export default async function handler(request, response) {
     return sendText(response, 400, "Missing text");
   }
 
+  if (rawText.length > LIMITS.cleanupText) {
+    return sendText(response, 413, "Text too large");
+  }
+
   try {
     const upstreamResponse = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -62,7 +68,6 @@ export default async function handler(request, response) {
     const responseBody = await upstreamResponse.text();
 
     if (!upstreamResponse.ok) {
-      console.error("Cleanup provider error", upstreamResponse.status, responseBody);
       return sendText(response, upstreamResponse.status, "Cleanup failed");
     }
 
@@ -79,31 +84,7 @@ export default async function handler(request, response) {
     }
 
     return sendText(response, 200, cleaned.trim());
-  } catch (error) {
-    console.error("Cleanup proxy failed", error);
+  } catch {
     return sendText(response, 502, "Cleanup failed");
   }
-}
-
-function readJsonBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    request.on("data", (chunk) => {
-      body += chunk;
-    });
-    request.on("end", () => {
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(error);
-      }
-    });
-    request.on("error", reject);
-  });
-}
-
-function sendText(response, statusCode, message) {
-  response.statusCode = statusCode;
-  response.setHeader("Content-Type", "text/plain; charset=utf-8");
-  return response.end(message);
 }

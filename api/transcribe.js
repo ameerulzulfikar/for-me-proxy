@@ -1,3 +1,7 @@
+import { LIMITS, PayloadTooLargeError, getMultipartFileSize, readRequestBody, sendText } from "./_validation.js";
+
+const MAX_MULTIPART_OVERHEAD = 1024 * 1024;
+
 export const config = {
   api: {
     bodyParser: false
@@ -20,8 +24,22 @@ export default async function handler(request, response) {
     return sendText(response, 400, "Expected multipart/form-data");
   }
 
+  const contentLength = Number(request.headers["content-length"]);
+  if (Number.isFinite(contentLength) && contentLength > LIMITS.transcribeBytes + MAX_MULTIPART_OVERHEAD) {
+    return sendText(response, 413, "Audio too large");
+  }
+
   try {
-    const body = await readRequestBody(request);
+    const body = await readRequestBody(request, LIMITS.transcribeBytes + MAX_MULTIPART_OVERHEAD);
+    const audioSize = getMultipartFileSize(body, contentType);
+
+    if (audioSize === null) {
+      return sendText(response, 400, "Missing audio file");
+    }
+
+    if (audioSize > LIMITS.transcribeBytes) {
+      return sendText(response, 413, "Audio too large");
+    }
 
     const upstreamResponse = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
@@ -37,23 +55,10 @@ export default async function handler(request, response) {
     response.setHeader("Content-Type", upstreamResponse.headers.get("content-type") || "application/json");
     return response.end(responseBody);
   } catch (error) {
-    console.error("Transcription proxy failed", error);
+    if (error instanceof PayloadTooLargeError) {
+      return sendText(response, 413, "Audio too large");
+    }
+
     return sendText(response, 502, "Transcription failed");
   }
-}
-
-function readRequestBody(request) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-
-    request.on("data", (chunk) => chunks.push(chunk));
-    request.on("end", () => resolve(Buffer.concat(chunks)));
-    request.on("error", reject);
-  });
-}
-
-function sendText(response, statusCode, message) {
-  response.statusCode = statusCode;
-  response.setHeader("Content-Type", "text/plain; charset=utf-8");
-  return response.end(message);
 }

@@ -1,3 +1,5 @@
+import { LIMITS, isPlainObject, readJsonBody, sendJson, totalStringLength } from "./_validation.js";
+
 const systemPrompt = `
 You are the user's personal journal assistant. You answer questions about their life based ONLY on the journal entries provided.
 - NEVER fabricate, invent, or assume information not present in the entries.
@@ -13,6 +15,8 @@ You are the user's personal journal assistant. You answer questions about their 
 - If the question is unrelated to the journal entries, e.g. weather/general facts, politely redirect: "I can only help with questions about your journal entries."
 - Always use the provided tool.
 `.trim();
+
+const streamingCitationInstruction = 'End your answer with a final line in the exact format CITED: ["id1","id2"] listing only IDs from the provided entries you referenced. If none, output CITED: [].';
 
 const answerTool = {
   name: "submit_journal_answer",
@@ -55,9 +59,14 @@ export default async function handler(request, response) {
     return sendJson(response, 400, { error: { message: "Invalid JSON" } });
   }
 
+  if (!isPlainObject(body)) {
+    return sendJson(response, 400, { error: { message: "Invalid request body" } });
+  }
+
   const question = typeof body.question === "string" ? body.question.trim() : "";
   const entries = Array.isArray(body.entries) ? body.entries : null;
   const history = body.history === undefined ? [] : body.history;
+  const stream = body.stream === undefined ? false : body.stream;
 
   if (!question) {
     return sendJson(response, 400, { error: { message: "Missing question" } });
@@ -69,6 +78,34 @@ export default async function handler(request, response) {
 
   if (!Array.isArray(history)) {
     return sendJson(response, 400, { error: { message: "Invalid history array" } });
+  }
+
+  if (typeof stream !== "boolean") {
+    return sendJson(response, 400, { error: { message: "Invalid stream" } });
+  }
+
+  if (question.length > LIMITS.askQuestion) {
+    return sendJson(response, 413, { error: { message: "Question too large" } });
+  }
+
+  if (entries.length > LIMITS.askEntries) {
+    return sendJson(response, 413, { error: { message: "Too many entries" } });
+  }
+
+  if (entries.some((entry) => typeof entry?.text === "string" && entry.text.length > LIMITS.askEntryText)) {
+    return sendJson(response, 413, { error: { message: "Entry text too large" } });
+  }
+
+  if (totalStringLength(entries, "text") > LIMITS.askCombinedEntryText) {
+    return sendJson(response, 413, { error: { message: "Combined entry text too large" } });
+  }
+
+  if (history.length > LIMITS.askHistory) {
+    return sendJson(response, 413, { error: { message: "Too many history messages" } });
+  }
+
+  if (history.some((message) => typeof message?.content === "string" && message.content.length > LIMITS.askHistoryMessage)) {
+    return sendJson(response, 413, { error: { message: "History message too large" } });
   }
 
   const sanitizedEntries = sanitizeEntries(entries);
@@ -86,6 +123,10 @@ export default async function handler(request, response) {
       .map((entry) => entry.id)
       .filter(Boolean)
   );
+
+  if (stream) {
+    return streamAnswer(response, apiKey, sanitizedHistory, sanitizedEntries, question, allowedEntryIDs);
+  }
 
   try {
     const upstreamResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -111,7 +152,6 @@ export default async function handler(request, response) {
 
     const responseBody = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
-      console.error("Ask provider error", upstreamResponse.status);
       return sendJson(response, 502, { error: { message: "Ask failed" } });
     }
 
@@ -120,21 +160,188 @@ export default async function handler(request, response) {
     const answer = toolUse?.input;
 
     if (!answer || typeof answer !== "object") {
-      console.error("Ask response missing tool output");
       return sendJson(response, 502, { error: { message: "Ask failed" } });
     }
 
     const validated = validateAnswer(answer, allowedEntryIDs);
     if (!validated) {
-      console.error("Ask response failed validation");
       return sendJson(response, 502, { error: { message: "Ask failed" } });
     }
 
     return sendJson(response, 200, validated);
-  } catch (error) {
-    console.error("Ask proxy failed", error instanceof Error ? error.message : error);
+  } catch {
     return sendJson(response, 502, { error: { message: "Ask failed" } });
   }
+}
+
+async function streamAnswer(response, apiKey, history, entries, question, allowedEntryIDs) {
+  let upstreamResponse;
+
+  try {
+    upstreamResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
+        temperature: 0.2,
+        stream: true,
+        system: `${systemPrompt}\n${streamingCitationInstruction}`,
+        messages: buildStreamingMessages(history, entries, question)
+      })
+    });
+  } catch {
+    return sendJson(response, 502, { error: { message: "Ask failed" } });
+  }
+
+  if (!upstreamResponse.ok || !upstreamResponse.body) {
+    return sendJson(response, 502, { error: { message: "Ask failed" } });
+  }
+
+  response.statusCode = 200;
+  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  response.setHeader("Cache-Control", "no-cache");
+  response.setHeader("Connection", "keep-alive");
+  response.flushHeaders?.();
+
+  let pendingText = "";
+  let providerBuffer = "";
+  let streamFailed = false;
+
+  try {
+    const decoder = new TextDecoder();
+
+    for await (const chunk of upstreamResponse.body) {
+      providerBuffer += decoder.decode(chunk, { stream: true });
+      const lines = providerBuffer.split(/\r?\n/);
+      providerBuffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data:")) {
+          continue;
+        }
+
+        const data = line.slice(5).trimStart();
+        if (!data || data === "[DONE]") {
+          continue;
+        }
+
+        let event;
+        try {
+          event = JSON.parse(data);
+        } catch {
+          continue;
+        }
+
+        if (event.type === "error") {
+          writeSse(response, "error", { message: normalizeProviderError(event) });
+          streamFailed = true;
+          break;
+        }
+
+        if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string") {
+          pendingText += event.delta.text;
+          if (pendingText.length > 200) {
+            const safeText = pendingText.slice(0, pendingText.length - 200);
+            pendingText = pendingText.slice(-200);
+            writeSse(response, "token", { text: safeText });
+          }
+        }
+      }
+
+      if (streamFailed) {
+        break;
+      }
+    }
+  } catch {
+    writeSse(response, "error", { message: "Ask failed" });
+    streamFailed = true;
+  }
+
+  if (!streamFailed) {
+    const { answerTail, citedEntryIDs } = parseCitationTail(pendingText, allowedEntryIDs);
+    if (answerTail) {
+      writeSse(response, "token", { text: answerTail });
+    }
+    writeSse(response, "done", { citedEntryIDs });
+  }
+
+  return response.end();
+}
+
+function buildStreamingMessages(history, entries, question) {
+  const messages = history.map((message) => ({
+    role: message.role,
+    content: [
+      {
+        type: "text",
+        text: message.content
+      }
+    ]
+  }));
+
+  messages.push({
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: [
+          "Journal entries:",
+          JSON.stringify(entries, null, 2),
+          "",
+          `Question: ${question}`,
+          "",
+          "Answer using only these entries."
+        ].join("\n")
+      }
+    ]
+  });
+
+  return messages;
+}
+
+function parseCitationTail(value, allowedEntryIDs) {
+  const citationStart = value.search(/(?:^|\r?\n)CITED:\s*/);
+  if (citationStart < 0) {
+    return { answerTail: value, citedEntryIDs: [] };
+  }
+
+  const prefixLength = value[citationStart] === "\n" || value[citationStart] === "\r" ? 1 : 0;
+  const answerTail = value.slice(0, citationStart);
+  const citationLine = value.slice(citationStart + prefixLength).trim();
+  const match = /^CITED:\s*(\[[^\r\n]*\])$/.exec(citationLine);
+
+  if (!match) {
+    return { answerTail, citedEntryIDs: [] };
+  }
+
+  try {
+    const parsed = JSON.parse(match[1]);
+    if (!Array.isArray(parsed)) {
+      return { answerTail, citedEntryIDs: [] };
+    }
+
+    const citedEntryIDs = parsed.filter((id) => (
+      typeof id === "string" && allowedEntryIDs.has(id)
+    ));
+    return { answerTail, citedEntryIDs };
+  } catch {
+    return { answerTail, citedEntryIDs: [] };
+  }
+}
+
+function normalizeProviderError(event) {
+  const message = event.error?.message;
+  return typeof message === "string" && message.trim() ? message.trim() : "Ask failed";
+}
+
+function writeSse(response, event, payload) {
+  response.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+  response.flush?.();
 }
 
 function buildMessages(history, entries, question) {
@@ -298,32 +505,4 @@ function normalizeOptionalString(value) {
 
 function normalizeOptionalInteger(value) {
   return Number.isInteger(value) ? value : null;
-}
-
-function isPlainObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readJsonBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-
-    request.on("data", (chunk) => {
-      body += chunk;
-    });
-    request.on("end", () => {
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(error);
-      }
-    });
-    request.on("error", reject);
-  });
-}
-
-function sendJson(response, statusCode, payload) {
-  response.statusCode = statusCode;
-  response.setHeader("Content-Type", "application/json; charset=utf-8");
-  return response.end(JSON.stringify(payload));
 }

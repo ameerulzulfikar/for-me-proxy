@@ -1,3 +1,5 @@
+import { LIMITS, isPlainObject, readJsonBody, sendJson } from "./_validation.js";
+
 const JOURNAL_MOODS = [
   "Calm",
   "Happy",
@@ -114,11 +116,19 @@ export default async function handler(request, response) {
     return sendJson(response, 400, { error: { message: "Invalid JSON" } });
   }
 
+  if (!isPlainObject(body)) {
+    return sendJson(response, 400, { error: { message: "Invalid request body" } });
+  }
+
   const text = typeof body.text === "string" ? body.text.trim() : "";
   const entryType = typeof body.entryType === "string" ? body.entryType.trim() : "";
 
   if (!text) {
     return sendJson(response, 400, { error: { message: "Missing text" } });
+  }
+
+  if (typeof body.text === "string" && body.text.length > LIMITS.analyseText) {
+    return sendJson(response, 413, { error: { message: "Text too large" } });
   }
 
   if (entryType !== "journal" && entryType !== "note") {
@@ -161,7 +171,6 @@ export default async function handler(request, response) {
 
     const responseBody = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
-      console.error("Analyse provider error", upstreamResponse.status, responseBody);
       return sendJson(response, 502, { error: { message: "Analysis failed" } });
     }
 
@@ -170,7 +179,6 @@ export default async function handler(request, response) {
     const analysis = toolUse?.input;
 
     if (!analysis || typeof analysis !== "object") {
-      console.error("Analyse response missing tool output", responseBody);
       return sendJson(response, 502, { error: { message: "Analysis failed" } });
     }
 
@@ -179,13 +187,11 @@ export default async function handler(request, response) {
       : validateNoteAnalysis(analysis);
 
     if (!validated) {
-      console.error("Analyse response failed validation", analysis);
       return sendJson(response, 502, { error: { message: "Analysis failed" } });
     }
 
     return sendJson(response, 200, validated);
-  } catch (error) {
-    console.error("Analyse proxy failed", error);
+  } catch {
     return sendJson(response, 502, { error: { message: "Analysis failed" } });
   }
 }
@@ -270,32 +276,4 @@ function normalizeSecondaryMoods(value) {
   }
 
   return normalized;
-}
-
-function isPlainObject(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readJsonBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-
-    request.on("data", (chunk) => {
-      body += chunk;
-    });
-    request.on("end", () => {
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(error);
-      }
-    });
-    request.on("error", reject);
-  });
-}
-
-function sendJson(response, statusCode, payload) {
-  response.statusCode = statusCode;
-  response.setHeader("Content-Type", "application/json; charset=utf-8");
-  return response.end(JSON.stringify(payload));
 }
