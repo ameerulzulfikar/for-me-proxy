@@ -26,7 +26,15 @@ export function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function readJsonBody(request) {
+export async function readJsonBody(request) {
+  if (request.body !== undefined) {
+    if (typeof request.body === "string" || Buffer.isBuffer(request.body)) {
+      return JSON.parse(request.body.toString());
+    }
+
+    return request.body;
+  }
+
   return new Promise((resolve, reject) => {
     let body = "";
 
