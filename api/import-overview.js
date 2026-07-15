@@ -1,5 +1,8 @@
 import { LIMITS, isPlainObject, readJsonBody, sendJson, totalStringLength } from "./_validation.js";
 
+const MAX_NOTES = 3_000;
+const MAX_COMBINED_NOTE_TEXT = 2_100_000; // Approximately 700,000 tokens at 3 characters per token.
+
 const systemPrompt = `
 You create an overview of a person's imported notes. Be a neutral observer in insight and a kind friend in delivery. Never be therapeutic and never say "you should". Never fabricate: ground every observation in the supplied content. When notes are thin, produce shorter, honest fields rather than generic filler.
 
@@ -75,7 +78,7 @@ export default async function handler(request, response) {
     return sendJson(response, 400, { error: { message: "Missing notes array" } });
   }
 
-  if (body.notes.length > LIMITS.overviewNotes) {
+  if (body.notes.length > MAX_NOTES) {
     return sendJson(response, 413, { error: { message: "Too many notes" } });
   }
 
@@ -88,8 +91,8 @@ export default async function handler(request, response) {
     return sendJson(response, 413, { error: { message: "Note text too large" } });
   }
 
-  const boundedNotes = totalStringLength(notes, "text") > LIMITS.overviewCombinedNoteText
-    ? dropOldestNotes(notes, LIMITS.overviewCombinedNoteText)
+  const boundedNotes = totalStringLength(notes, "text") > MAX_COMBINED_NOTE_TEXT
+    ? dropOldestNotes(notes, MAX_COMBINED_NOTE_TEXT)
     : notes;
 
   try {
@@ -101,9 +104,8 @@ export default async function handler(request, response) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 2200,
-        temperature: 0.2,
+        model: "claude-sonnet-5",
+        max_tokens: 16000,
         system: systemPrompt,
         tools: [overviewTool],
         tool_choice: { type: "tool", name: overviewTool.name },
