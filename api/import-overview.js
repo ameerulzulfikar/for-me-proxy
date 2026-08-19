@@ -2,6 +2,8 @@ import { LIMITS, isPlainObject, readJsonBody, sendJson, totalStringLength } from
 
 const MAX_NOTES = 3_000;
 const MAX_COMBINED_NOTE_TEXT = 2_100_000; // Approximately 700,000 tokens at 3 characters per token.
+const MAX_PROVIDER_ATTEMPTS = 3;
+const RETRYABLE_PROVIDER_STATUSES = new Set([429, 500, 502, 503, 504, 529]);
 
 const systemPrompt = `
 You are reading someone's complete personal note archive across many years: every word they have supplied. Do not summarize it. Read it as an unusually perceptive friend would, attending to who this person is, how they have changed, and what has quietly endured. Write every section in the second person, with warmth, specificity, and restraint. Never sound therapeutic or clinical, and never say "you should". Prefer a few deeply seen observations to broad coverage. Always return the result through the provided tool.
@@ -138,7 +140,7 @@ export default async function handler(request, response) {
     : notes;
 
   try {
-    const upstreamResponse = await fetch("https://api.anthropic.com/v1/messages", {
+    const upstreamResponse = await fetchProviderWithRetry({
       method: "POST",
       headers: {
         "x-api-key": apiKey,
@@ -185,6 +187,29 @@ export default async function handler(request, response) {
     console.error("Import overview proxy failed", formatCaughtError(error));
     return sendJson(response, 502, { error: { message: "Import overview failed" } });
   }
+}
+
+async function fetchProviderWithRetry(options) {
+  let lastError;
+
+  for (let attempt = 0; attempt < MAX_PROVIDER_ATTEMPTS; attempt += 1) {
+    try {
+      const providerResponse = await fetch("https://api.anthropic.com/v1/messages", options);
+      if (!RETRYABLE_PROVIDER_STATUSES.has(providerResponse.status) || attempt === MAX_PROVIDER_ATTEMPTS - 1) {
+        return providerResponse;
+      }
+      await providerResponse.body?.cancel();
+    } catch (error) {
+      lastError = error;
+      if (attempt === MAX_PROVIDER_ATTEMPTS - 1) {
+        throw error;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500 * (2 ** attempt)));
+  }
+
+  throw lastError;
 }
 
 function formatCaughtError(error) {
