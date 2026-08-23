@@ -140,7 +140,7 @@ export default async function handler(request, response) {
     : notes;
 
   try {
-    const upstreamResponse = await fetchProviderWithRetry({
+    const upstreamResult = await fetchProviderWithRetry({
       method: "POST",
       headers: {
         "x-api-key": apiKey,
@@ -167,49 +167,106 @@ export default async function handler(request, response) {
       })
     });
 
-    const responseText = await upstreamResponse.text();
-    if (!upstreamResponse.ok) {
-      console.error("Import overview provider error", upstreamResponse.status, responseText);
-      return sendJson(response, 502, { error: { message: "Import overview failed" } });
+    if (!upstreamResult.ok) {
+      console.error("Import overview provider error", upstreamResult.status, upstreamResult.responseBody);
+      // TODO remove after debugging: temporarily surface the provider's complete failed-attempt history.
+      return sendJson(response, 502, {
+        error: {
+          message: "Import overview failed",
+          detail: { providerAttempts: upstreamResult.attempts }
+        }
+      });
     }
 
-    const responseBody = JSON.parse(responseText);
+    const responseBody = JSON.parse(upstreamResult.responseBody);
     const toolUse = responseBody.content?.find((block) => block.type === "tool_use" && block.name === overviewTool.name);
     const overview = validateOverview(toolUse?.input);
 
     if (!overview) {
-      console.error("Import overview response failed validation", upstreamResponse.status);
-      return sendJson(response, 502, { error: { message: "Import overview failed" } });
+      console.error("Import overview response failed validation", upstreamResult.status);
+      // TODO remove after debugging: temporarily surface the provider response that failed local validation.
+      return sendJson(response, 502, {
+        error: {
+          message: "Import overview failed",
+          detail: {
+            providerStatus: upstreamResult.status,
+            providerBody: upstreamResult.responseBody,
+            validation: "Provider response was missing valid submit_import_overview tool output"
+          }
+        }
+      });
     }
 
     return sendJson(response, 200, overview);
   } catch (error) {
     console.error("Import overview proxy failed", formatCaughtError(error));
-    return sendJson(response, 502, { error: { message: "Import overview failed" } });
+    // TODO remove after debugging: temporarily surface caught exceptions and all provider attempts.
+    return sendJson(response, 502, {
+      error: {
+        message: "Import overview failed",
+        detail: {
+          exception: formatCaughtError(error),
+          providerAttempts: Array.isArray(error?.providerAttempts) ? error.providerAttempts : []
+        }
+      }
+    });
   }
 }
 
 async function fetchProviderWithRetry(options) {
-  let lastError;
+  const attempts = [];
 
   for (let attempt = 0; attempt < MAX_PROVIDER_ATTEMPTS; attempt += 1) {
     try {
       const providerResponse = await fetch("https://api.anthropic.com/v1/messages", options);
-      if (!RETRYABLE_PROVIDER_STATUSES.has(providerResponse.status) || attempt === MAX_PROVIDER_ATTEMPTS - 1) {
-        return providerResponse;
+      const responseBody = await providerResponse.text();
+
+      if (providerResponse.ok) {
+        return {
+          ok: true,
+          status: providerResponse.status,
+          responseBody,
+          attempts
+        };
       }
-      await providerResponse.body?.cancel();
+
+      const failedAttempt = {
+        attempt: attempt + 1,
+        providerStatus: providerResponse.status,
+        providerBody: responseBody
+      };
+      attempts.push(failedAttempt);
+      console.error("Import overview provider attempt failed", JSON.stringify(failedAttempt));
+
+      if (!RETRYABLE_PROVIDER_STATUSES.has(providerResponse.status) || attempt === MAX_PROVIDER_ATTEMPTS - 1) {
+        return {
+          ok: false,
+          status: providerResponse.status,
+          responseBody,
+          attempts
+        };
+      }
     } catch (error) {
-      lastError = error;
+      const failedAttempt = {
+        attempt: attempt + 1,
+        exception: formatCaughtError(error)
+      };
+      attempts.push(failedAttempt);
+      console.error("Import overview provider attempt threw", JSON.stringify(failedAttempt));
+
       if (attempt === MAX_PROVIDER_ATTEMPTS - 1) {
-        throw error;
+        const providerError = new Error("Import overview provider request failed after retries", { cause: error });
+        providerError.providerAttempts = attempts;
+        throw providerError;
       }
     }
 
     await new Promise((resolve) => setTimeout(resolve, 500 * (2 ** attempt)));
   }
 
-  throw lastError;
+  const providerError = new Error("Import overview provider request exhausted retries");
+  providerError.providerAttempts = attempts;
+  throw providerError;
 }
 
 function formatCaughtError(error) {

@@ -104,7 +104,11 @@ export default async function handler(request, response) {
     const responseText = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
       console.error("Reflection provider error", upstreamResponse.status, responseText);
-      return sendReflectionFailure(response);
+      // TODO remove after debugging: temporarily surface the complete provider error.
+      return sendReflectionFailure(response, {
+        providerStatus: upstreamResponse.status,
+        providerBody: responseText
+      });
     }
 
     const responseBody = JSON.parse(responseText);
@@ -113,18 +117,24 @@ export default async function handler(request, response) {
 
     if (!reflection) {
       console.error("Reflection response missing or failed tool validation", upstreamResponse.status, responseBody.stop_reason || "unknown");
-      return sendReflectionFailure(response);
+      // TODO remove after debugging: temporarily surface the provider response that failed local validation.
+      return sendReflectionFailure(response, {
+        providerStatus: upstreamResponse.status,
+        providerBody: responseText,
+        validation: "Provider response was missing valid submit_weekly_reflection tool output"
+      });
     }
 
     return sendJson(response, 200, reflection);
   } catch (error) {
     console.error("Reflection proxy failed", formatCaughtError(error));
-    return sendReflectionFailure(response);
+    // TODO remove after debugging: temporarily surface the caught exception and stack.
+    return sendReflectionFailure(response, { exception: formatCaughtError(error) });
   }
 }
 
-function sendReflectionFailure(response) {
-  return sendJson(response, 502, { error: { message: "Reflection failed" } });
+function sendReflectionFailure(response, detail) {
+  return sendJson(response, 502, { error: { message: "Reflection failed", detail } });
 }
 
 function formatCaughtError(error) {

@@ -34,6 +34,8 @@ test("import overview serializes the writing rules in a valid provider request",
 test("import overview retries transient provider failures", async (context) => {
   const previousApiKey = process.env.ANTHROPIC_API_KEY;
   const previousFetch = globalThis.fetch;
+  const previousConsoleError = console.error;
+  const loggedErrors = [];
   let attempts = 0;
 
   process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
@@ -43,10 +45,12 @@ test("import overview retries transient provider failures", async (context) => {
       ? new Response('{"type":"error"}', { status: 529 })
       : successfulProviderResponse();
   };
+  console.error = (...args) => loggedErrors.push(args);
 
   context.after(() => {
     restoreEnvironment("ANTHROPIC_API_KEY", previousApiKey);
     globalThis.fetch = previousFetch;
+    console.error = previousConsoleError;
   });
 
   const response = createResponse();
@@ -54,6 +58,7 @@ test("import overview retries transient provider failures", async (context) => {
 
   assert.equal(attempts, 2);
   assert.equal(response.statusCode, 200);
+  assert.match(JSON.stringify(loggedErrors), /providerStatus.*529/);
 });
 
 test("import overview does not retry provider 400 responses", async (context) => {
@@ -80,6 +85,58 @@ test("import overview does not retry provider 400 responses", async (context) =>
 
   assert.equal(attempts, 1);
   assert.equal(response.statusCode, 502);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: {
+      message: "Import overview failed",
+      detail: {
+        providerAttempts: [
+          {
+            attempt: 1,
+            providerStatus: 400,
+            providerBody: '{"type":"error","error":{"message":"invalid request"}}'
+          }
+        ]
+      }
+    }
+  });
+});
+
+test("import overview surfaces every exception and response across retry attempts", async (context) => {
+  const previousApiKey = process.env.ANTHROPIC_API_KEY;
+  const previousFetch = globalThis.fetch;
+  const previousConsoleError = console.error;
+  let attempts = 0;
+
+  process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
+  globalThis.fetch = async () => {
+    attempts += 1;
+    if (attempts === 1) {
+      throw new Error("diagnostic network failure");
+    }
+    return new Response('{"type":"error","error":{"message":"invalid request after retry"}}', { status: 400 });
+  };
+  console.error = () => {};
+
+  context.after(() => {
+    restoreEnvironment("ANTHROPIC_API_KEY", previousApiKey);
+    globalThis.fetch = previousFetch;
+    console.error = previousConsoleError;
+  });
+
+  const response = createResponse();
+  await handler(createRequest(), response);
+
+  const providerAttempts = JSON.parse(response.body).error.detail.providerAttempts;
+  assert.equal(attempts, 2);
+  assert.equal(response.statusCode, 502);
+  assert.equal(providerAttempts.length, 2);
+  assert.equal(providerAttempts[0].attempt, 1);
+  assert.match(providerAttempts[0].exception, /diagnostic network failure/);
+  assert.deepEqual(providerAttempts[1], {
+    attempt: 2,
+    providerStatus: 400,
+    providerBody: '{"type":"error","error":{"message":"invalid request after retry"}}'
+  });
 });
 
 function createRequest() {
