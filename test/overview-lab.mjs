@@ -60,6 +60,7 @@ async function main() {
 
     printSection(`RESPONSE — HTTP ${response.status}`);
     console.log(typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody, null, 2));
+    printVerificationSummary(responseBody);
 
     printSection("RUN SUMMARY");
     console.log(`Notes sent: ${selectedNotes.length}`);
@@ -228,6 +229,20 @@ async function saveRun(responseBody, labMode) {
 
 function printSection(title) {
   console.log(`\n${"=".repeat(72)}\n${title}\n${"=".repeat(72)}`);
+}
+
+function printVerificationSummary(responseBody) {
+  if (!responseBody || typeof responseBody !== "object" || !responseBody.verification) {
+    return;
+  }
+
+  const { totalCitations, passed, failed, failures } = responseBody.verification;
+  printSection("VERIFICATION");
+  console.log(`Total citations: ${totalCitations} | Passed: ${passed} | Failed: ${failed}`);
+
+  for (const failure of Array.isArray(failures) ? failures : []) {
+    console.log(`${failure.noteId || "(no noteId)"} | ${JSON.stringify(failure.quote)} | ${failure.reason}`);
+  }
 }
 
 function formatElapsed(elapsedMs) {
