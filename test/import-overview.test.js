@@ -17,7 +17,8 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   const upstreamBody = JSON.parse(restore.requests[0].options.body);
   assert.equal(restore.requests.length, 1);
   assert.equal(upstreamBody.model, "claude-sonnet-5");
-  assert.equal(upstreamBody.max_tokens, 16000);
+  assert.equal(upstreamBody.max_tokens, 32000);
+  assert.ok(restore.requests[0].options.signal instanceof AbortSignal);
   assert.match(upstreamBody.system, /NEVER WRITE QUOTE TEXT YOURSELF/);
   assert.match(upstreamBody.system, /NEVER WRITE A YEAR, MONTH, CALENDAR DATE, DATE RANGE, OR BARE AGE IN PROSE/);
   assert.match(upstreamBody.system, /Do not write phrases such as "at 19"/);
@@ -217,8 +218,133 @@ test("import overview makes exactly one provider attempt on failure", async (con
 
   assert.equal(attempts, 1);
   assert.equal(response.statusCode, 502);
-  assert.deepEqual(JSON.parse(response.body), { error: { message: "Import overview failed" } });
+  assert.deepEqual(JSON.parse(response.body), {
+    error: {
+      message: "Import overview failed",
+      detail: {
+        type: "provider_http_error",
+        message: "Provider returned HTTP 529",
+        provider_status: 529,
+        provider_body: { type: "error" },
+        stop_reason: null,
+        usage: null
+      }
+    }
+  });
   assert.match(JSON.stringify(restore.loggedErrors), /Import overview provider error.*529/);
+});
+
+test("import overview reports max_tokens with provider usage instead of flattening it", async (context) => {
+  const restore = installProviderMock(context, () => providerResponse({
+    content: [{ type: "text", text: "incomplete" }],
+    stopReason: "max_tokens",
+    usage: {
+      input_tokens: 700000,
+      output_tokens: 32000,
+      output_tokens_details: { thinking_tokens: 28000 }
+    }
+  }));
+  const response = createResponse();
+
+  await handler(createRequest([note("one", "One", "Text", "2026-08-25T00:00:00.000Z")]), response);
+
+  assert.equal(response.statusCode, 502);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: {
+      message: "Import overview failed",
+      detail: {
+        type: "stop_reason",
+        message: "Provider stopped with max_tokens before completing the overview",
+        stop_reason: "max_tokens",
+        usage: {
+          input_tokens: 700000,
+          output_tokens: 32000,
+          output_tokens_details: { thinking_tokens: 28000 }
+        }
+      }
+    }
+  });
+  assert.match(JSON.stringify(restore.loggedErrors), /stop_reason=max_tokens.*output_tokens=32000/);
+});
+
+test("import overview degrades a partial tool payload to a detailed validation error", async (context) => {
+  installProviderMock(context, () => providerResponse({
+    content: [{
+      type: "tool_use",
+      name: "submit_import_overview",
+      input: { opening: "Partial output" }
+    }],
+    stopReason: "tool_use",
+    usage: { input_tokens: 100, output_tokens: 200 }
+  }));
+  const response = createResponse();
+
+  await handler(createRequest([note("one", "One", "Text", "2026-08-25T00:00:00.000Z")]), response);
+
+  assert.equal(response.statusCode, 502);
+  assert.deepEqual(JSON.parse(response.body), {
+    error: {
+      message: "Import overview failed",
+      detail: {
+        type: "tool_input_validation_error",
+        message: "Provider tool input failed overview validation",
+        stop_reason: "tool_use",
+        usage: { input_tokens: 100, output_tokens: 200 }
+      }
+    }
+  });
+});
+
+test("import overview handles malformed partial content without entering verification", async (context) => {
+  installProviderMock(context, () => providerResponse({
+    content: { partial: true },
+    stopReason: "end_turn",
+    usage: { input_tokens: 100, output_tokens: 50 }
+  }));
+  const response = createResponse();
+
+  await handler(createRequest([note("one", "One", "Text", "2026-08-25T00:00:00.000Z")]), response);
+
+  assert.equal(response.statusCode, 502);
+  assert.deepEqual(JSON.parse(response.body).error.detail, {
+    type: "missing_tool_output",
+    message: "Provider response did not contain the required overview tool output",
+    stop_reason: "end_turn",
+    usage: { input_tokens: 100, output_tokens: 50 }
+  });
+});
+
+test("import overview identifies malformed provider JSON as a parse error", async (context) => {
+  installProviderMock(context, () => new Response("{not-json", { status: 200 }));
+  const response = createResponse();
+
+  await handler(createRequest([note("one", "One", "Text", "2026-08-25T00:00:00.000Z")]), response);
+
+  assert.equal(response.statusCode, 502);
+  const detail = JSON.parse(response.body).error.detail;
+  assert.equal(detail.type, "parse_error");
+  assert.match(detail.message, /JSON/u);
+  assert.equal(typeof detail.stack, "string");
+  assert.equal(detail.stop_reason, null);
+  assert.equal(detail.usage, null);
+});
+
+test("import overview identifies a provider timeout", async (context) => {
+  installProviderMock(context, () => {
+    const error = new Error("The operation timed out");
+    error.name = "TimeoutError";
+    throw error;
+  });
+  const response = createResponse();
+
+  await handler(createRequest([note("one", "One", "Text", "2026-08-25T00:00:00.000Z")]), response);
+
+  assert.equal(response.statusCode, 502);
+  const detail = JSON.parse(response.body).error.detail;
+  assert.equal(detail.type, "timeout");
+  assert.equal(detail.message, "The operation timed out");
+  assert.equal(detail.stop_reason, null);
+  assert.equal(detail.usage, null);
 });
 
 test("import overview rejects invalid createdAt values before calling the provider", async (context) => {
@@ -255,14 +381,24 @@ function baseOverviewInput(overrides = {}) {
 }
 
 function successfulProviderResponse(input) {
-  return new Response(JSON.stringify({
+  return providerResponse({
     content: [
       {
         type: "tool_use",
         name: "submit_import_overview",
         input
       }
-    ]
+    ],
+    stopReason: "tool_use",
+    usage: { input_tokens: 100, output_tokens: 200 }
+  });
+}
+
+function providerResponse({ content, stopReason, usage }) {
+  return new Response(JSON.stringify({
+    content,
+    stop_reason: stopReason,
+    usage
   }), { status: 200 });
 }
 

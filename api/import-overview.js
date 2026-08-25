@@ -3,6 +3,8 @@ import { LIMITS, isPlainObject, readJsonBody, sendJson, totalStringLength } from
 const MAX_NOTES = 3_000;
 const MAX_COMBINED_NOTE_TEXT = 2_100_000; // Approximately 700,000 tokens at 3 characters per token.
 const MONTH_BREAKDOWN_MIN_NOTES = 12;
+const MAX_OUTPUT_TOKENS = 32_000;
+const PROVIDER_TIMEOUT_MS = 270_000;
 
 const systemPrompt = `
 You are reading someone's complete personal note archive across many years: every word they have supplied. Do not summarize it. Read it as an unusually perceptive friend would, attending to who this person is, how they have changed, and what has quietly endured. Write every section in the second person, with warmth, specificity, and restraint. Never sound therapeutic or clinical, and never say "you should". Prefer a few deeply seen observations to broad coverage. Always return the result through the provided tool.
@@ -180,6 +182,7 @@ export default async function handler(request, response) {
   try {
     const upstreamResponse = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
       headers: {
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
@@ -187,7 +190,7 @@ export default async function handler(request, response) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 16000,
+        max_tokens: MAX_OUTPUT_TOKENS,
         system: systemPrompt,
         tools: [overviewTool],
         tool_choice: { type: "tool", name: overviewTool.name },
@@ -208,23 +211,98 @@ export default async function handler(request, response) {
     const responseText = await upstreamResponse.text();
     if (!upstreamResponse.ok) {
       console.error("Import overview provider error", upstreamResponse.status, responseText);
-      return sendJson(response, 502, { error: { message: "Import overview failed" } });
+      return sendImportOverviewFailure(response, {
+        type: "provider_http_error",
+        message: `Provider returned HTTP ${upstreamResponse.status}`,
+        provider_status: upstreamResponse.status,
+        provider_body: parseProviderErrorBody(responseText),
+        stop_reason: null,
+        usage: null
+      });
     }
 
-    const responseBody = JSON.parse(responseText);
-    const toolUse = responseBody.content?.find((block) => block.type === "tool_use" && block.name === overviewTool.name);
+    let responseBody;
+    try {
+      responseBody = JSON.parse(responseText);
+    } catch (error) {
+      console.error("Import overview provider response parse failed", formatCaughtError(error));
+      return sendImportOverviewFailure(response, {
+        type: "parse_error",
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack || null : null,
+        stop_reason: null,
+        usage: null
+      });
+    }
+
+    const providerDiagnostics = getProviderDiagnostics(responseBody);
+    if (["max_tokens", "model_context_window_exceeded"].includes(providerDiagnostics.stop_reason)) {
+      console.error(`Import overview provider stopped before completing tool output stop_reason=${providerDiagnostics.stop_reason} output_tokens=${providerDiagnostics.usage?.output_tokens ?? "unknown"}`);
+      return sendImportOverviewFailure(response, {
+        type: "stop_reason",
+        message: `Provider stopped with ${providerDiagnostics.stop_reason} before completing the overview`,
+        ...providerDiagnostics
+      });
+    }
+
+    const responseContent = Array.isArray(responseBody?.content) ? responseBody.content : [];
+    const toolUse = responseContent.find((block) => isPlainObject(block) && block.type === "tool_use" && block.name === overviewTool.name);
     const overview = validateOverview(toolUse?.input);
 
     if (!overview) {
-      console.error("Import overview response failed validation", upstreamResponse.status);
-      return sendJson(response, 502, { error: { message: "Import overview failed" } });
+      console.error(`Import overview response failed validation stop_reason=${providerDiagnostics.stop_reason ?? "unknown"} output_tokens=${providerDiagnostics.usage?.output_tokens ?? "unknown"}`);
+      return sendImportOverviewFailure(response, {
+        type: toolUse ? "tool_input_validation_error" : "missing_tool_output",
+        message: toolUse ? "Provider tool input failed overview validation" : "Provider response did not contain the required overview tool output",
+        ...providerDiagnostics
+      });
     }
 
-    return sendJson(response, 200, verifyOverview(overview, scaffoldedNotes));
+    try {
+      return sendJson(response, 200, verifyOverview(overview, scaffoldedNotes));
+    } catch (error) {
+      console.error("Import overview verification crashed", formatCaughtError(error));
+      return sendImportOverviewFailure(response, {
+        type: "verification_crash",
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack || null : null,
+        ...providerDiagnostics
+      });
+    }
   } catch (error) {
     console.error("Import overview proxy failed", formatCaughtError(error));
-    return sendJson(response, 502, { error: { message: "Import overview failed" } });
+    return sendImportOverviewFailure(response, {
+      type: isTimeoutError(error) ? "timeout" : "caught_exception",
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack || null : null,
+      stop_reason: null,
+      usage: null
+    });
   }
+}
+
+// TODO remove after debugging: temporarily expose provider-safe failure metadata in 502 responses.
+function sendImportOverviewFailure(response, detail) {
+  return sendJson(response, 502, { error: { message: "Import overview failed", detail } });
+}
+
+function getProviderDiagnostics(responseBody) {
+  return {
+    stop_reason: typeof responseBody?.stop_reason === "string" ? responseBody.stop_reason : null,
+    usage: isPlainObject(responseBody?.usage) ? responseBody.usage : null
+  };
+}
+
+function parseProviderErrorBody(responseText) {
+  try {
+    return JSON.parse(responseText);
+  } catch {
+    return responseText.slice(0, 4_000);
+  }
+}
+
+function isTimeoutError(error) {
+  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError" || error.cause?.name === "TimeoutError" || error.cause?.name === "AbortError");
 }
 
 function formatCaughtError(error) {
