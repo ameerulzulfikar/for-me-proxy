@@ -7,7 +7,7 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   const restore = installProviderMock(context, () => successfulProviderResponse(baseOverviewInput()));
   const request = createRequest([
     note("later", "Later", "Latest full text", "2025-05-10T12:00:00.000Z"),
-    note("earliest-source-id", "Earliest", "Earliest full text", "2024-01-02T12:00:00.000Z"),
+    note("earliest-source-id", "Earliest", "Earliest first line\n\nEarliest third line", "2024-01-02T12:00:00.000Z"),
     note("middle", "Middle", "Middle full text", "2025-03-15T12:00:00.000Z")
   ]);
   const response = createResponse();
@@ -18,23 +18,30 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   assert.equal(restore.requests.length, 1);
   assert.equal(upstreamBody.model, "claude-sonnet-5");
   assert.equal(upstreamBody.max_tokens, 16000);
-  assert.match(upstreamBody.system, /Every date you write must be copied verbatim from a note label or from the timeline index/);
+  assert.match(upstreamBody.system, /NEVER WRITE QUOTE TEXT YOURSELF/);
+  assert.match(upstreamBody.system, /NEVER WRITE A YEAR, MONTH, CALENDAR DATE, OR DATE RANGE IN PROSE/);
   assert.ok(upstreamBody.tools[0].input_schema.properties.openingCitations);
   assert.ok(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.citations);
+  assert.deepEqual(Object.keys(upstreamBody.tools[0].input_schema.properties.openingCitations.items.properties), ["noteId", "startLine", "endLine"]);
+  assert.ok(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.noteIds);
+  assert.equal(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.period, undefined);
+  assert.ok(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.properties.sourceNoteId);
+  assert.equal(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.properties.whenWritten, undefined);
 
   const prompt = upstreamBody.messages[0].content[0].text;
   assert.equal(prompt.startsWith("TIMELINE INDEX — SERVER-COMPUTED AND AUTHORITATIVE"), true);
   assert.match(prompt, /\| Overall \| January 2024 – May 2025 \| 3 \|/);
   assert.match(prompt, /\| Year \| 2024 \| 1 \|/);
   assert.match(prompt, /\| Year \| 2025 \| 2 \|/);
-  assert.ok(prompt.indexOf('[NOTE n1 | DATE: January 2024 | TITLE: "Earliest"]\nEarliest full text') < prompt.indexOf('[NOTE n2 | DATE: March 2025 | TITLE: "Middle"]\nMiddle full text'));
-  assert.ok(prompt.indexOf('[NOTE n2 | DATE: March 2025 | TITLE: "Middle"]\nMiddle full text') < prompt.indexOf('[NOTE n3 | DATE: May 2025 | TITLE: "Later"]\nLatest full text'));
+  assert.match(prompt, /\[NOTE n1 \| DATE: January 2024 \| TITLE: "Earliest"\]\nn1\|L1\| Earliest first line\nn1\|L2\| \nn1\|L3\| Earliest third line/);
+  assert.ok(prompt.indexOf('[NOTE n1 | DATE: January 2024 | TITLE: "Earliest"]') < prompt.indexOf('[NOTE n2 | DATE: March 2025 | TITLE: "Middle"]\nn2|L1| Middle full text'));
+  assert.ok(prompt.indexOf('[NOTE n2 | DATE: March 2025 | TITLE: "Middle"]') < prompt.indexOf('[NOTE n3 | DATE: May 2025 | TITLE: "Later"]\nn3|L1| Latest full text'));
   assert.doesNotMatch(prompt, /earliest-source-id/);
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(JSON.parse(response.body).verification, {
-    totalCitations: 0,
-    passed: 0,
+    totalCitations: 3,
+    passed: 3,
     failed: 0,
     failures: []
   });
@@ -59,85 +66,112 @@ test("import overview adds month counts when a year has enough notes", async (co
   assert.equal(response.statusCode, 200);
 });
 
-test("import overview removes fabricated quotes and corrects sourced dates", async (context) => {
+test("import overview substitutes exact line locators, computes dates, and removes invalid evidence", async (context) => {
   const providerInput = baseOverviewInput({
-    opening: 'You wrote "exact phrase". You also wrote “fabricated thought”. A repeat said fabricated thought! This remains.',
-    openingCitations: [
-      { noteId: "n1", quote: '"exact phrase"' },
-      { noteId: "n1", quote: "fabricated thought" }
-    ],
+    opening: "In 2020 you were rushing. You wrote {{cite:0}} in a list. This remains.",
+    openingCitations: [{ noteId: "n1", startLine: 1, endLine: 2 }],
     seasons: [
       {
         title: "One",
-        period: "April 1900",
-        narrative: 'You wrote "exact phrase".',
-        citations: [{ noteId: "n1", quote: '"exact phrase"' }]
+        noteIds: ["n2", "n1"],
+        narrative: "You wrote {{cite:0}} early on.",
+        citations: [{ noteId: "n1", startLine: 1, endLine: 1 }]
       },
       {
         title: "Two",
-        period: "March 2025",
-        narrative: "You tracked Project Cedar.",
-        citations: [{ noteId: "n2", quote: "Project Cedar" }]
+        noteIds: ["n2"],
+        narrative: "You tracked {{cite:0}} carefully.",
+        citations: [{ noteId: "n2", startLine: 1, endLine: 1 }]
       },
       {
         title: "Three",
-        period: "invented date",
+        noteIds: ["n99"],
         narrative: "No quoted words here.",
         citations: []
       }
     ],
-    language: "You called it “missing words”.",
-    languageCitations: [{ noteId: "n99", quote: "missing words" }],
+    language: "This bad source said {{cite:0}}. This remains.",
+    languageCitations: [{ noteId: "n99", startLine: 1, endLine: 1 }],
+    unchanged: "This bad range said {{cite:0}}. Another thought remains.",
+    unchangedCitations: [{ noteId: "n1", startLine: 8, endLine: 9 }],
+    patterns: "This empty source said {{cite:0}}. The pattern remains.",
+    patternsCitations: [{ noteId: "n1", startLine: 3, endLine: 3 }],
     forgottenIdeas: [
       {
         title: "Cedar",
-        whenWritten: "January 1999",
-        why: "You named Project Cedar.",
-        citations: [{ noteId: "n2", quote: "Project Cedar" }]
+        sourceNoteId: "n2",
+        why: "You named {{cite:0}}.",
+        citations: [{ noteId: "n2", startLine: 1, endLine: 1 }]
       },
       {
         title: "Unquoted",
-        whenWritten: "",
+        sourceNoteId: "n99",
         why: "No quote.",
         citations: []
       }
-    ]
+    ],
+    tenderThread: "This malformed token said {{cite:9}}. Care remains.",
+    tenderThreadCitations: []
   });
   const restore = installProviderMock(context, () => successfulProviderResponse(providerInput));
   const response = createResponse();
 
   await handler(createRequest([
-    note("old", "Old", "I wrote “exact\nphrase” here.", "2024-01-05T00:00:00.000Z"),
-    note("new", "New", "I tracked Project Cedar carefully.", "2025-03-06T00:00:00.000Z")
+    note("old", "Old", "exact phrase\r\nsecond exact line\r\n", "2024-01-05T00:00:00.000Z"),
+    note("new", "New", "Project Cedar\ncarefully tracked", "2025-03-06T00:00:00.000Z")
   ]), response);
 
   assert.equal(restore.requests.length, 1);
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.equal(result.opening, 'You wrote "exact phrase". This remains.');
-  assert.doesNotMatch(result.opening, /fabricated thought/);
-  assert.deepEqual(result.openingCitations, [{ noteId: "n1", quote: '"exact phrase"' }]);
-  assert.equal(result.language, "");
+  assert.equal(result.opening, "You wrote “exact phrase\r\nsecond exact line” in a list. This remains.");
+  assert.deepEqual(result.openingCitations, [{ noteId: "n1", startLine: 1, endLine: 2 }]);
+  assert.equal(result.language, "This remains.");
   assert.deepEqual(result.languageCitations, []);
-  assert.equal(result.seasons[0].period, "January 2024");
-  assert.equal(result.seasons[1].period, "March 2025");
+  assert.equal(result.unchanged, "Another thought remains.");
+  assert.equal(result.patterns, "The pattern remains.");
+  assert.equal(result.tenderThread, "Care remains.");
+  assert.equal(result.seasons[0].period, "Jan 2024 – Mar 2025");
+  assert.equal(result.seasons[1].period, "Mar 2025");
   assert.equal(result.seasons[2].period, "");
-  assert.equal(result.forgottenIdeas[0].whenWritten, "March 2025");
+  assert.equal(result.seasons[0].narrative, "You wrote “exact phrase” early on.");
+  assert.equal(result.seasons[1].narrative, "You tracked “Project Cedar” carefully.");
+  assert.equal(result.forgottenIdeas[0].whenWritten, "Mar 2025");
+  assert.equal(result.forgottenIdeas[1].whenWritten, "");
   assert.deepEqual(result.verification, {
-    totalCitations: 10,
-    passed: 5,
-    failed: 5,
+    totalCitations: 15,
+    passed: 8,
+    failed: 7,
     failures: [
-      { noteId: "n1", quote: "fabricated thought", reason: "quote_not_in_note" },
-      { noteId: "n99", quote: "missing words", reason: "note_not_found" },
-      { noteId: "n1", quote: "April 1900", reason: "date_mismatch" },
-      { noteId: "", quote: "invented date", reason: "date_mismatch" },
-      { noteId: "n2", quote: "January 1999", reason: "date_mismatch" }
+      { noteId: "", startLine: null, endLine: null, reason: "date_in_prose" },
+      { noteId: "n99", startLine: 1, endLine: 1, reason: "note_not_found" },
+      { noteId: "n1", startLine: 8, endLine: 9, reason: "invalid_locator" },
+      { noteId: "n1", startLine: 3, endLine: 3, reason: "empty_span" },
+      { noteId: "", startLine: null, endLine: null, reason: "invalid_locator" },
+      { noteId: "n99", startLine: null, endLine: null, reason: "note_not_found" },
+      { noteId: "n99", startLine: null, endLine: null, reason: "note_not_found" }
     ]
   });
   assert.deepEqual(restore.loggedErrors, [
-    ["Import overview verification totalCitations=10 passed=5 failed=5"]
+    ["Import overview verification totalCitations=15 passed=8 failed=7"]
   ]);
+});
+
+test("import overview trims a long cited span at its first sentence", async (context) => {
+  const longLine = `A short exact sentence. ${"additional source words ".repeat(20)}`;
+  const providerInput = baseOverviewInput({
+    opening: "You wrote {{cite:0}}",
+    openingCitations: [{ noteId: "n1", startLine: 1, endLine: 1 }]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([note("one", "One", longLine, "2026-08-25T00:00:00.000Z")]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.opening, "You wrote “A short exact sentence.”");
+  assert.equal(result.opening.includes("additional source words"), false);
 });
 
 test("import overview makes exactly one provider attempt on failure", async (context) => {
@@ -172,9 +206,9 @@ function baseOverviewInput(overrides = {}) {
     opening: "Opening",
     openingCitations: [],
     seasons: [
-      { title: "One", period: "", narrative: "First", citations: [] },
-      { title: "Two", period: "", narrative: "Second", citations: [] },
-      { title: "Three", period: "", narrative: "Third", citations: [] }
+      { title: "One", noteIds: ["n1"], narrative: "First", citations: [] },
+      { title: "Two", noteIds: ["n1"], narrative: "Second", citations: [] },
+      { title: "Three", noteIds: ["n1"], narrative: "Third", citations: [] }
     ],
     language: "Language",
     languageCitations: [],

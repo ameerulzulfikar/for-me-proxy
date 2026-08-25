@@ -241,7 +241,10 @@ function printVerificationSummary(responseBody) {
   console.log(`Total citations: ${totalCitations} | Passed: ${passed} | Failed: ${failed}`);
 
   for (const failure of Array.isArray(failures) ? failures : []) {
-    console.log(`${failure.noteId || "(no noteId)"} | ${JSON.stringify(failure.quote)} | ${failure.reason}`);
+    const locator = Number.isInteger(failure.startLine) && Number.isInteger(failure.endLine)
+      ? `L${failure.startLine}-L${failure.endLine}`
+      : "(no lines)";
+    console.log(`${failure.noteId || "(no noteId)"} | ${locator} | ${failure.reason}`);
   }
 }
 

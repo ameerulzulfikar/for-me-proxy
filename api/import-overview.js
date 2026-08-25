@@ -20,18 +20,20 @@ INSIGHT REQUIREMENT: At least two observations across the whole response must be
 
 Do not add personality typing, psychological frameworks, or diagnostic language of any kind.
 
-SOURCE LABELS AND CITATIONS — ABSOLUTE
-The user message begins with a server-computed timeline index, followed by notes labelled n1, n2, and so on in chronological order. Treat those labels as the only authority for dates and quotes.
-1. Every date you write must be copied verbatim from a note label or from the timeline index. Never infer, estimate, reconstruct, reformat, or compute a date yourself. A season period spanning multiple notes must be consistent with the timeline index.
-2. Every free-text section has a parallel citations array. For opening, language, unchanged, patterns, and tenderThread, use the correspondingly named top-level citations array. Each season and forgotten idea has its own citations array.
-3. Any words presented as the person's own must have a citation entry with the source noteId and the exact contiguous quote copied character-for-character from that note. Never reconstruct a quote from memory, combine fragments, correct spelling, or change punctuation.
-4. Include only citations for quotes actually used in that section's prose. If a section contains no quoted words, return an empty citations array.
+SOURCE LOCATORS AND SERVER-COMPUTED DATES — ABSOLUTE
+The user message begins with a server-computed timeline index, followed by notes labelled n1, n2, and so on in chronological order. Every line of note text is prefixed with its note ID and line number, such as "n412|L7|".
+1. NEVER WRITE QUOTE TEXT YOURSELF. To quote the person, insert a token such as {{cite:0}} at the exact position where the quote belongs in the prose. Then put { noteId, startLine, endLine } at index 0 of that section's citations array. The server, not you, will extract and insert the exact words from those lines.
+2. Treat each citation token as a quoted phrase so the surrounding prose is grammatical after substitution. Example: You wrote {{cite:0}} in the middle of a grocery list.
+3. Citation indexes start at 0 and refer only to the citations array beside that section. Use an inclusive line range. Never put quote text in a citation object or anywhere else in your response.
+4. For opening, language, unchanged, patterns, and tenderThread, use the correspondingly named top-level citations array. Each season and forgotten idea has its own citations array. Include only locators used by tokens in that section. If there are no tokens, return an empty citations array.
+5. NEVER WRITE A YEAR, MONTH, CALENDAR DATE, OR DATE RANGE IN PROSE. Refer to time relatively, with phrases such as "early on", "years later", or "in the last stretch". Do not produce period or whenWritten fields. The server computes every displayed date from real createdAt metadata.
+6. For each season, provide noteIds containing the earliest and latest notes in that chapter, plus any other notes you drew on. For each forgotten idea, provide the single sourceNoteId where the idea appears. These source IDs are for server-side date computation, not prose.
 
 OPENING
 Write 2-4 sentences that interpret the person rather than inventorying the archive. Use at most two named specifics. It should feel like the opening of a letter from someone who knows them, never a table of contents.
 
 SEASONS
-Identify 3-6 emotional and identity chapters that genuinely emerge from the writing rather than dividing time into arbitrary calendar buckets. Give each season a title, a human-readable period such as "2016 – 2019" derived strictly from the notes' createdAt values, and a full narrative paragraph of 4-8 sentences. Describe who they were, what they were reaching toward, and the register of their writing in that season. Only when the notes provide evidence, describe what appears to have prompted the transition into the next season; otherwise leave the cause unstated. Ground every season with 1-2 short, exact phrases quoted verbatim from their notes, never a paragraph.
+Identify 3-6 emotional and identity chapters that genuinely emerge from the writing rather than dividing time into arbitrary calendar buckets. Give each season a title, noteIds containing the earliest and latest notes belonging to that chapter plus any others you drew on, and a full narrative paragraph of 4-8 sentences. Describe who they were, what they were reaching toward, and the register of their writing in that season. Only when the notes provide evidence, describe what appears to have prompted the transition into the next season; otherwise leave the cause unstated. Ground every season with 1-2 short citation tokens pointing to exact note lines, never quote text or a paragraph.
 
 LANGUAGE
 Write one substantial paragraph about what the writing style itself reveals beyond subject matter. Notice movements between terse and expansive writing, stretches dominated by lists or by feeling, runs of motivational self-talk and what came before them, and meaningful gaps when writing stopped. Surface patterns the person is unlikely to have recognized alone.
@@ -43,7 +45,7 @@ PATTERNS
 Write one paragraph about identity-level behavioral fingerprints, not recurring topics. Attend to how setbacks are processed, how ambition appears on the page compared with feeling, cycles of returning to abandoned things, and what courage looks like in these notes.
 
 FORGOTTEN IDEAS
-Return 3-5 specific, dated ideas that are genuinely forgotten or easily overlooked, with a concise explanation of why each is worth revisiting.
+Return 3-5 specific ideas that are genuinely forgotten or easily overlooked, with the sourceNoteId where each idea appears and a concise explanation of why each is worth revisiting. Do not write a date; the server will add whenWritten from that note's metadata.
 
 TENDER THREAD
 Write one paragraph that plainly recognizes emotional depth—grief, love, strain, faith—when it is present, and acknowledges that it matters. Exercise deliberate discretion across this entire first-impression output: never name deceased people, romantic partners, health conditions, or diagnoses. Gesture carefully, as in "there is grief here you have redrafted across years," without identifying who or what it concerns. Earn trust by combining real perception with privacy; deeper detail can wait for a later private setting.
@@ -61,9 +63,10 @@ const citationSchema = {
   additionalProperties: false,
   properties: {
     noteId: { type: "string" },
-    quote: { type: "string", minLength: 1 }
+    startLine: { type: "integer", minimum: 1 },
+    endLine: { type: "integer", minimum: 1 }
   },
-  required: ["noteId", "quote"]
+  required: ["noteId", "startLine", "endLine"]
 };
 
 const citationsSchema = {
@@ -89,11 +92,15 @@ const overviewTool = {
           additionalProperties: false,
           properties: {
             title: { type: "string" },
-            period: { type: "string" },
+            noteIds: {
+              type: "array",
+              minItems: 1,
+              items: { type: "string" }
+            },
             narrative: { type: "string" },
             citations: citationsSchema
           },
-          required: ["title", "period", "narrative", "citations"]
+          required: ["title", "noteIds", "narrative", "citations"]
         }
       },
       language: { type: "string" },
@@ -110,11 +117,11 @@ const overviewTool = {
           additionalProperties: false,
           properties: {
             title: { type: "string" },
-            whenWritten: { type: "string" },
+            sourceNoteId: { type: "string" },
             why: { type: "string" },
             citations: citationsSchema
           },
-          required: ["title", "whenWritten", "why", "citations"]
+          required: ["title", "sourceNoteId", "why", "citations"]
         }
       },
       tenderThread: { type: "string" },
@@ -230,32 +237,52 @@ function scaffoldNotes(notes) {
       timestamp: Date.parse(note.createdAt)
     }))
     .sort((a, b) => a.timestamp - b.timestamp || compareStrings(a.id, b.id) || a.originalIndex - b.originalIndex)
-    .map((note, index) => ({
-      noteId: `n${index + 1}`,
-      title: note.title,
-      text: note.text,
-      createdAt: note.createdAt,
-      timestamp: note.timestamp,
-      dateLabel: formatDateLabel(note.timestamp)
-    }));
+    .map((note, index) => {
+      const { lines, lineEndings } = splitNoteText(note.text);
+      return {
+        noteId: `n${index + 1}`,
+        title: note.title,
+        text: note.text,
+        lines,
+        lineEndings,
+        createdAt: note.createdAt,
+        timestamp: note.timestamp,
+        dateLabel: formatDateLabel(note.timestamp)
+      };
+    });
 }
 
 function buildOverviewPrompt(notes) {
   const noteBlocks = notes.map((note) => [
     `[NOTE ${note.noteId} | DATE: ${note.dateLabel} | TITLE: ${JSON.stringify(note.title)}]`,
-    note.text,
+    note.lines.map((line, index) => `${note.noteId}|L${index + 1}| ${line}`).join("\n"),
     `[END NOTE ${note.noteId}]`
   ].join("\n"));
 
   return [
     buildTimelineIndex(notes),
     "",
-    "Use only the dates printed above and in the note labels below. Copy dates verbatim; do not calculate or reformat them.",
-    "Use the note IDs in citation entries. Citation quotes must be exact contiguous substrings of the labelled note text.",
+    "The timeline is reference material only. Do not write dates in prose or return date fields.",
+    "To quote, write only a {{cite:N}} token and a { noteId, startLine, endLine } locator in that section's citations array. Never write the quote text.",
     "",
     "NOTES — CHRONOLOGICAL, FULL TEXT",
     noteBlocks.join("\n\n")
   ].join("\n");
+}
+
+function splitNoteText(text) {
+  const lines = [];
+  const lineEndings = [];
+  let lineStart = 0;
+
+  for (const match of text.matchAll(/\r\n|\n|\r/gu)) {
+    lines.push(text.slice(lineStart, match.index));
+    lineEndings.push(match[0]);
+    lineStart = match.index + match[0].length;
+  }
+  lines.push(text.slice(lineStart));
+  lineEndings.push("");
+  return { lines, lineEndings };
 }
 
 function buildTimelineIndex(notes) {
@@ -367,26 +394,27 @@ function validateOverview(value) {
 
   const seasons = [];
   for (const season of value.seasons) {
-    if (!isPlainObject(season) || typeof season.title !== "string" || typeof season.period !== "string" || typeof season.narrative !== "string") {
+    if (!isPlainObject(season) || typeof season.title !== "string" || typeof season.narrative !== "string") {
       return null;
     }
+    const noteIds = validateNoteIds(season.noteIds);
     const citations = validateCitations(season.citations);
-    if (!citations) {
+    if (!noteIds || !citations) {
       return null;
     }
-    seasons.push({ title: season.title, period: season.period, narrative: season.narrative, citations });
+    seasons.push({ title: season.title, noteIds, narrative: season.narrative, citations });
   }
 
   const forgottenIdeas = [];
   for (const idea of value.forgottenIdeas) {
-    if (!isPlainObject(idea) || typeof idea.title !== "string" || typeof idea.whenWritten !== "string" || typeof idea.why !== "string") {
+    if (!isPlainObject(idea) || typeof idea.title !== "string" || typeof idea.sourceNoteId !== "string" || !idea.sourceNoteId.trim() || typeof idea.why !== "string") {
       return null;
     }
     const citations = validateCitations(idea.citations);
     if (!citations) {
       return null;
     }
-    forgottenIdeas.push({ title: idea.title, whenWritten: idea.whenWritten, why: idea.why, citations });
+    forgottenIdeas.push({ title: idea.title, sourceNoteId: idea.sourceNoteId.trim(), why: idea.why, citations });
   }
 
   return {
@@ -405,6 +433,21 @@ function validateOverview(value) {
   };
 }
 
+function validateNoteIds(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+
+  const noteIds = [];
+  for (const noteId of value) {
+    if (typeof noteId !== "string" || !noteId.trim()) {
+      return null;
+    }
+    noteIds.push(noteId.trim());
+  }
+  return noteIds;
+}
+
 function validateCitations(value) {
   if (!Array.isArray(value)) {
     return null;
@@ -412,10 +455,14 @@ function validateCitations(value) {
 
   const citations = [];
   for (const citation of value) {
-    if (!isPlainObject(citation) || typeof citation.noteId !== "string" || !citation.noteId.trim() || typeof citation.quote !== "string" || !citation.quote.trim()) {
+    if (!isPlainObject(citation) || typeof citation.noteId !== "string" || !Number.isInteger(citation.startLine) || !Number.isInteger(citation.endLine)) {
       return null;
     }
-    citations.push({ noteId: citation.noteId.trim(), quote: citation.quote });
+    citations.push({
+      noteId: citation.noteId.trim(),
+      startLine: citation.startLine,
+      endLine: citation.endLine
+    });
   }
 
   return citations;
@@ -430,27 +477,27 @@ function verifyOverview(overview, notes) {
     failures: []
   };
 
-  const opening = verifyTextCitations(overview.opening, overview.openingCitations, notesById, verification);
-  const language = verifyTextCitations(overview.language, overview.languageCitations, notesById, verification);
-  const unchanged = verifyTextCitations(overview.unchanged, overview.unchangedCitations, notesById, verification);
-  const patterns = verifyTextCitations(overview.patterns, overview.patternsCitations, notesById, verification);
-  const tenderThread = verifyTextCitations(overview.tenderThread, overview.tenderThreadCitations, notesById, verification);
+  const opening = verifyProse(overview.opening, overview.openingCitations, notesById, verification);
+  const language = verifyProse(overview.language, overview.languageCitations, notesById, verification);
+  const unchanged = verifyProse(overview.unchanged, overview.unchangedCitations, notesById, verification);
+  const patterns = verifyProse(overview.patterns, overview.patternsCitations, notesById, verification);
+  const tenderThread = verifyProse(overview.tenderThread, overview.tenderThreadCitations, notesById, verification);
 
   const seasons = overview.seasons.map((season) => {
-    const narrative = verifyTextCitations(season.narrative, season.citations, notesById, verification);
+    const narrative = verifyProse(season.narrative, season.citations, notesById, verification);
     return {
       title: season.title,
-      period: verifyDateField(season.period, narrative.citations, notesById, verification, true),
+      period: computeSeasonPeriod(season.noteIds, notesById, verification),
       narrative: narrative.text,
       citations: narrative.citations
     };
   });
 
   const forgottenIdeas = overview.forgottenIdeas.map((idea) => {
-    const why = verifyTextCitations(idea.why, idea.citations, notesById, verification);
+    const why = verifyProse(idea.why, idea.citations, notesById, verification);
     return {
       title: idea.title,
-      whenWritten: verifyDateField(idea.whenWritten, why.citations, notesById, verification, false),
+      whenWritten: computeNoteDate(idea.sourceNoteId, notesById, verification),
       why: why.text,
       citations: why.citations
     };
@@ -475,147 +522,239 @@ function verifyOverview(overview, notes) {
   };
 }
 
-function verifyTextCitations(text, citations, notesById, verification) {
-  let verifiedText = text;
-  const passedCitations = [];
+function verifyProse(text, citations, notesById, verification) {
+  const withoutDates = stripDatesFromProse(text, verification);
+  return substituteCitationTokens(withoutDates, citations, notesById, verification);
+}
 
-  for (const citation of citations) {
+function stripDatesFromProse(text, verification) {
+  const maskedText = text.replace(/\{\{\s*cite\s*:[^{}]*\}\}/giu, (token) => " ".repeat(token.length));
+  const datePattern = /\b\d{4}-\d{1,2}(?:-\d{1,2})?\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|\b(?:18|19|20|21)\d{2}\b|\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\.?\s+(?:\d{1,2}(?:st|nd|rd|th)?(?:,?\s+(?:18|19|20|21)\d{2})?|(?:18|19|20|21)\d{2}))?\b/gu;
+  const removalRanges = [];
+
+  for (const match of maskedText.matchAll(datePattern)) {
     verification.totalCitations += 1;
-    const note = notesById.get(citation.noteId);
+    recordVerificationFailure(verification, {
+      noteId: "",
+      startLine: null,
+      endLine: null,
+      reason: "date_in_prose"
+    });
+    removalRanges.push(findSentenceRange(text, match.index, match.index + match[0].length));
+  }
 
-    if (!note) {
-      recordVerificationFailure(verification, citation.noteId, citation.quote, "note_not_found");
-      verifiedText = removeSentenceContainingQuote(verifiedText, citation.quote);
+  return removeTextRanges(text, removalRanges);
+}
+
+function substituteCitationTokens(text, citations, notesById, verification) {
+  const tokenPattern = /\{\{\s*cite\s*:\s*([^{}]*?)\s*\}\}/giu;
+  const tokens = [...text.matchAll(tokenPattern)].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+    rawIndex: match[1].trim()
+  }));
+  const invalidRanges = [];
+  const replacements = [];
+
+  for (const token of tokens) {
+    verification.totalCitations += 1;
+    const citationIndex = /^\d+$/u.test(token.rawIndex) ? Number(token.rawIndex) : -1;
+    const citation = citations[citationIndex];
+
+    if (!citation) {
+      recordVerificationFailure(verification, {
+        noteId: "",
+        startLine: null,
+        endLine: null,
+        reason: "invalid_locator"
+      });
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
       continue;
     }
 
-    if (!normalizedIncludes(note.text, citation.quote)) {
-      recordVerificationFailure(verification, citation.noteId, citation.quote, "quote_not_in_note");
-      verifiedText = removeSentenceContainingQuote(verifiedText, citation.quote);
+    const note = notesById.get(citation.noteId);
+    if (!note) {
+      recordVerificationFailure(verification, { ...citation, reason: "note_not_found" });
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
+      continue;
+    }
+
+    if (citation.startLine < 1 || citation.endLine < citation.startLine || citation.endLine > note.lines.length) {
+      recordVerificationFailure(verification, { ...citation, reason: "invalid_locator" });
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
+      continue;
+    }
+
+    const span = extractLineSpan(note, citation.startLine, citation.endLine).trim();
+    if (!span) {
+      recordVerificationFailure(verification, { ...citation, reason: "empty_span" });
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
       continue;
     }
 
     verification.passed += 1;
-    passedCitations.push(citation);
+    replacements.push({
+      ...token,
+      citationIndex,
+      replacement: `“${trimQuotedSpan(span)}”`
+    });
   }
 
+  const mergedInvalidRanges = mergeRanges(invalidRanges);
+  const usableReplacements = replacements.filter((replacement) => !mergedInvalidRanges.some((range) => range.start <= replacement.start && replacement.end <= range.end));
+  const operations = [
+    ...mergedInvalidRanges.map((range) => ({ ...range, replacement: "" })),
+    ...usableReplacements
+  ].sort((a, b) => b.start - a.start);
+  let verifiedText = text;
+
+  for (const operation of operations) {
+    if (operation.replacement) {
+      verifiedText = `${verifiedText.slice(0, operation.start)}${operation.replacement}${verifiedText.slice(operation.end)}`;
+    } else {
+      verifiedText = removeTextRange(verifiedText, operation);
+    }
+  }
+
+  const usedIndexes = new Set(usableReplacements.map((replacement) => replacement.citationIndex));
   return {
-    text: verifiedText,
-    citations: passedCitations.filter((citation) => normalizedIncludes(verifiedText, citation.quote))
+    text: verifiedText.trim(),
+    citations: citations.filter((_, index) => usedIndexes.has(index))
   };
 }
 
-function verifyDateField(value, citations, notesById, verification, isRange) {
-  const referencedNotes = [...new Map(citations
-    .map((citation) => notesById.get(citation.noteId))
-    .filter(Boolean)
-    .map((note) => [note.noteId, note])).values()]
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  if (referencedNotes.length === 0) {
-    if (value.trim()) {
-      verification.totalCitations += 1;
-      recordVerificationFailure(verification, "", value, "date_mismatch");
+function extractLineSpan(note, startLine, endLine) {
+  let span = "";
+  for (let index = startLine - 1; index < endLine; index += 1) {
+    span += note.lines[index];
+    if (index < endLine - 1) {
+      span += note.lineEndings[index];
     }
+  }
+  return span;
+}
+
+function trimQuotedSpan(span) {
+  if (span.length <= 200) {
+    return span;
+  }
+
+  const firstTwoHundred = span.slice(0, 200);
+  const firstSentence = /[.!?]["'”’)]?(?=\s|$)/u.exec(firstTwoHundred);
+  if (firstSentence) {
+    return firstTwoHundred.slice(0, firstSentence.index + firstSentence[0].length).trimEnd();
+  }
+
+  const lastWhitespace = firstTwoHundred.search(/\s+\S*$/u);
+  return (lastWhitespace > 0 ? firstTwoHundred.slice(0, lastWhitespace) : firstTwoHundred).trimEnd();
+}
+
+function computeSeasonPeriod(noteIds, notesById, verification) {
+  const notes = verifyNoteReferences(noteIds, notesById, verification)
+    .sort((a, b) => a.timestamp - b.timestamp);
+  if (notes.length === 0) {
     return "";
   }
-
-  const expectedValue = isRange
-    ? formatDateRange(referencedNotes[0].dateLabel, referencedNotes[referencedNotes.length - 1].dateLabel)
-    : referencedNotes[0].dateLabel;
-  verification.totalCitations += 1;
-
-  if (value.trim() === expectedValue) {
-    verification.passed += 1;
-  } else {
-    recordVerificationFailure(verification, referencedNotes[0].noteId, value, "date_mismatch");
-  }
-
-  return expectedValue;
+  return formatShortDateRange(notes[0].timestamp, notes[notes.length - 1].timestamp);
 }
 
-function recordVerificationFailure(verification, noteId, quote, reason) {
-  verification.failed += 1;
-  verification.failures.push({ noteId, quote, reason });
+function computeNoteDate(noteId, notesById, verification) {
+  const [note] = verifyNoteReferences([noteId], notesById, verification);
+  return note ? formatShortDateLabel(note.timestamp) : "";
 }
 
-function normalizedIncludes(text, quote) {
-  const normalizedQuote = normalizeComparableText(quote).trim();
-  return Boolean(normalizedQuote) && normalizeComparableText(text).includes(normalizedQuote);
-}
+function verifyNoteReferences(noteIds, notesById, verification) {
+  const notes = [];
+  const seen = new Set();
 
-function normalizeComparableText(value) {
-  let normalized = "";
-  let previousWasWhitespace = false;
-
-  for (const character of value) {
-    if (/\s/u.test(character)) {
-      if (!previousWasWhitespace) {
-        normalized += " ";
-        previousWasWhitespace = true;
-      }
+  for (const noteId of noteIds) {
+    if (seen.has(noteId)) {
       continue;
     }
-
-    normalized += normalizeQuoteCharacter(character);
-    previousWasWhitespace = false;
+    seen.add(noteId);
+    verification.totalCitations += 1;
+    const note = notesById.get(noteId);
+    if (!note) {
+      recordVerificationFailure(verification, {
+        noteId,
+        startLine: null,
+        endLine: null,
+        reason: "note_not_found"
+      });
+      continue;
+    }
+    verification.passed += 1;
+    notes.push(note);
   }
 
-  return normalized;
+  return notes;
 }
 
-function normalizeQuoteCharacter(character) {
-  if (["‘", "’", "‚", "‛", "′"].includes(character)) {
-    return "'";
-  }
-  if (["“", "”", "„", "‟", "″"].includes(character)) {
-    return '"';
-  }
-  return character;
+function formatShortDateLabel(timestamp) {
+  const date = new Date(timestamp);
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${monthNames[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
-function removeSentenceContainingQuote(text, quote) {
-  let verifiedText = text;
-
-  while (true) {
-    const match = findNormalizedMatch(verifiedText, quote);
-    if (!match) {
-      return verifiedText;
-    }
-
-    const nextText = removeMatchedSentence(verifiedText, match);
-    if (nextText === verifiedText) {
-      return verifiedText;
-    }
-    verifiedText = nextText;
-  }
+function formatShortDateRange(firstTimestamp, lastTimestamp) {
+  const first = formatShortDateLabel(firstTimestamp);
+  const last = formatShortDateLabel(lastTimestamp);
+  return first === last ? first : `${first} – ${last}`;
 }
 
-function removeMatchedSentence(text, match) {
-  let sentenceStart = match.start;
-  while (sentenceStart > 0 && !/[.!?\n]/u.test(text[sentenceStart - 1])) {
-    sentenceStart -= 1;
+function recordVerificationFailure(verification, failure) {
+  verification.failed += 1;
+  verification.failures.push(failure);
+}
+
+function findSentenceRange(text, matchStart, matchEnd) {
+  let start = matchStart;
+  while (start > 0 && !/[.!?\n]/u.test(text[start - 1])) {
+    start -= 1;
   }
-  while (sentenceStart < text.length && /\s/u.test(text[sentenceStart])) {
-    sentenceStart += 1;
+  while (start < text.length && /\s/u.test(text[start])) {
+    start += 1;
   }
 
-  let sentenceEnd = Math.max(match.end, sentenceStart);
-  const matchEndsWithTerminator = sentenceEnd > sentenceStart && /[.!?\n]/u.test(text[sentenceEnd - 1]);
-  if (!matchEndsWithTerminator) {
-    while (sentenceEnd < text.length && !/[.!?\n]/u.test(text[sentenceEnd])) {
-      sentenceEnd += 1;
-    }
-    if (sentenceEnd < text.length) {
-      sentenceEnd += 1;
-    }
+  let end = Math.max(matchEnd, start);
+  while (end < text.length && !/[.!?\n]/u.test(text[end])) {
+    end += 1;
   }
-  while (sentenceEnd < text.length && /["'”’)]/u.test(text[sentenceEnd])) {
-    sentenceEnd += 1;
+  if (end < text.length) {
+    end += 1;
   }
+  while (end < text.length && /["'”’)]/u.test(text[end])) {
+    end += 1;
+  }
+  return { start, end };
+}
 
-  const before = text.slice(0, sentenceStart).trimEnd();
-  const after = text.slice(sentenceEnd).trimStart();
+function mergeRanges(ranges) {
+  const sorted = [...ranges].sort((a, b) => a.start - b.start || a.end - b.end);
+  const merged = [];
+
+  for (const range of sorted) {
+    const previous = merged[merged.length - 1];
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+  return merged;
+}
+
+function removeTextRanges(text, ranges) {
+  let result = text;
+  for (const range of mergeRanges(ranges).sort((a, b) => b.start - a.start)) {
+    result = removeTextRange(result, range);
+  }
+  return result.trim();
+}
+
+function removeTextRange(text, range) {
+  const before = text.slice(0, range.start).trimEnd();
+  const after = text.slice(range.end).trimStart();
   if (!before) {
     return after;
   }
@@ -623,52 +762,7 @@ function removeMatchedSentence(text, match) {
     return before;
   }
 
-  const removedText = text.slice(sentenceStart, sentenceEnd);
+  const removedText = text.slice(range.start, range.end);
   const separator = removedText.includes("\n\n") ? "\n\n" : removedText.includes("\n") ? "\n" : " ";
   return `${before}${separator}${after}`;
-}
-
-function findNormalizedMatch(text, quote) {
-  const normalizedText = normalizeTextWithOffsets(text);
-  const normalizedQuote = normalizeComparableText(quote).trim();
-  if (!normalizedQuote) {
-    return null;
-  }
-
-  const matchIndex = normalizedText.text.indexOf(normalizedQuote);
-  if (matchIndex < 0) {
-    return null;
-  }
-
-  const lastMatchIndex = matchIndex + normalizedQuote.length - 1;
-  return {
-    start: normalizedText.starts[matchIndex],
-    end: normalizedText.ends[lastMatchIndex]
-  };
-}
-
-function normalizeTextWithOffsets(value) {
-  let text = "";
-  const starts = [];
-  const ends = [];
-
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (/\s/u.test(character)) {
-      if (text.endsWith(" ")) {
-        ends[ends.length - 1] = index + 1;
-      } else {
-        text += " ";
-        starts.push(index);
-        ends.push(index + 1);
-      }
-      continue;
-    }
-
-    text += normalizeQuoteCharacter(character);
-    starts.push(index);
-    ends.push(index + 1);
-  }
-
-  return { text, starts, ends };
 }
