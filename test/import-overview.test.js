@@ -19,7 +19,15 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   assert.equal(upstreamBody.model, "claude-sonnet-5");
   assert.equal(upstreamBody.max_tokens, 16000);
   assert.match(upstreamBody.system, /NEVER WRITE QUOTE TEXT YOURSELF/);
-  assert.match(upstreamBody.system, /NEVER WRITE A YEAR, MONTH, CALENDAR DATE, OR DATE RANGE IN PROSE/);
+  assert.match(upstreamBody.system, /NEVER WRITE A YEAR, MONTH, CALENDAR DATE, DATE RANGE, OR BARE AGE IN PROSE/);
+  assert.match(upstreamBody.system, /Do not write phrases such as "at 19"/);
+  assert.match(upstreamBody.system, /at the start of the real estate years/);
+  assert.match(upstreamBody.system, /Every season narrative must contain 5-9 sentences/);
+  assert.match(upstreamBody.system, /Aim for 4-6 seasons total, not more/);
+  assert.match(upstreamBody.system, /Every season must include at least one citation token.*at least one concrete non-quoted specific/);
+  assert.match(upstreamBody.system, /one substantial paragraph of 6-10 sentences about what the writing style itself reveals/);
+  assert.match(upstreamBody.system, /Choose quotes for emotional or revealing weight, not as decoration/);
+  assert.match(upstreamBody.system, /Your job is depth, not coverage/);
   assert.ok(upstreamBody.tools[0].input_schema.properties.openingCitations);
   assert.ok(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.citations);
   assert.deepEqual(Object.keys(upstreamBody.tools[0].input_schema.properties.openingCitations.items.properties), ["noteId", "startLine", "endLine"]);
@@ -170,8 +178,31 @@ test("import overview trims a long cited span at its first sentence", async (con
 
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.equal(result.opening, "You wrote “A short exact sentence.”");
+  assert.equal(result.opening, "You wrote “A short exact sentence”.");
   assert.equal(result.opening.includes("additional source words"), false);
+});
+
+test("import overview wraps extracted text with one balanced quote pair and cleans trailing punctuation", async (context) => {
+  const providerInput = baseOverviewInput({
+    opening: "A revealing line was {{cite:0}} in a task list. You repeated {{cite:1}}.",
+    openingCitations: [
+      { noteId: "n1", startLine: 1, endLine: 1 },
+      { noteId: "n1", startLine: 2, endLine: 2 }
+    ]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", '"call psych\'s asap. )\n“Keep going!””', "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.opening, "A revealing line was “call psych's asap” in a task list. You repeated “Keep going”.");
+  assert.equal((result.opening.match(/“/gu) || []).length, 2);
+  assert.equal((result.opening.match(/”/gu) || []).length, 2);
+  assert.doesNotMatch(result.opening, /["„‟″«»]/u);
 });
 
 test("import overview makes exactly one provider attempt on failure", async (context) => {

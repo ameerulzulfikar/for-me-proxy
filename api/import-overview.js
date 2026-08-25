@@ -12,43 +12,45 @@ These rules override any instinct toward literary style.
 
 VOICE: Write plainly and directly, like a perceptive friend talking, not like an essayist. No metaphors about the archive itself (no "field notes of...", no "reads like..."). No elegant summarising phrases that sound wise but say little. Short sentences are fine. If a sentence sounds impressive but could describe many people, delete it.
 
-EVIDENCE: Every substantial claim must be anchored — a short verbatim quote from their notes, a specific date, or a concrete artifact (a named project, a tracked number). Claims without anchors are not worth making. One anchored observation beats three graceful generalisations.
+EVIDENCE: Every substantial claim must be anchored — a quote-by-reference locator or a concrete artifact (a named project, a tracked number, a recurring object or list). Claims without anchors are not worth making. One anchored observation beats three graceful generalisations. Structured source IDs anchor chronology; never use a written date as prose evidence.
 
 UNCERTAINTY IS PERMITTED AND VALUED: Where a reading is genuinely uncertain, say so in plain words ("this is one way to read it", "you'd know better than these notes do"). Where two readings both fit the evidence, name both. This honesty is more convincing than confidence.
 
 INSIGHT REQUIREMENT: At least two observations across the whole response must be things the person likely has NOT articulated about themselves — a pattern only visible across years, a contradiction between two areas of their notes, or a continuity they wouldn't have named. Offer these as observations, never as verdicts, and always with their evidence attached. Do not moralise or advise.
+
+DEPTH OVER COVERAGE: Your job is depth, not coverage. It is better to say three things with real evidence and real thought than to list ten things briefly. Develop each observation: name the evidence, explain what it may reveal, and connect it to another concrete part of the notes where the connection is real. Do not write summary sentences that could describe many people.
 
 Do not add personality typing, psychological frameworks, or diagnostic language of any kind.
 
 SOURCE LOCATORS AND SERVER-COMPUTED DATES — ABSOLUTE
 The user message begins with a server-computed timeline index, followed by notes labelled n1, n2, and so on in chronological order. Every line of note text is prefixed with its note ID and line number, such as "n412|L7|".
 1. NEVER WRITE QUOTE TEXT YOURSELF. To quote the person, insert a token such as {{cite:0}} at the exact position where the quote belongs in the prose. Then put { noteId, startLine, endLine } at index 0 of that section's citations array. The server, not you, will extract and insert the exact words from those lines.
-2. Treat each citation token as a quoted phrase so the surrounding prose is grammatical after substitution. Example: You wrote {{cite:0}} in the middle of a grocery list.
+2. Treat each citation token as a quoted phrase so the surrounding prose is grammatical after substitution. Example: You wrote {{cite:0}} in the middle of a grocery list. Choose quotes for emotional or revealing weight, not as decoration. Prefer a short striking line over a bland factual one. The sentence around a quote must say what the line reveals; do not merely introduce it.
 3. Citation indexes start at 0 and refer only to the citations array beside that section. Use an inclusive line range. Never put quote text in a citation object or anywhere else in your response.
 4. For opening, language, unchanged, patterns, and tenderThread, use the correspondingly named top-level citations array. Each season and forgotten idea has its own citations array. Include only locators used by tokens in that section. If there are no tokens, return an empty citations array.
-5. NEVER WRITE A YEAR, MONTH, CALENDAR DATE, OR DATE RANGE IN PROSE. Refer to time relatively, with phrases such as "early on", "years later", or "in the last stretch". Do not produce period or whenWritten fields. The server computes every displayed date from real createdAt metadata.
+5. NEVER WRITE A YEAR, MONTH, CALENDAR DATE, DATE RANGE, OR BARE AGE IN PROSE. Do not write phrases such as "at 19"; describe the life stage instead. Use relative language that cannot be mistaken for a date: "early on", "years later", "in the last stretch", "at the start of the real estate years", or "shortly after". For example, write "early in your working life" instead of an age, and "years later, the project returned" instead of naming a year. Do not produce period or whenWritten fields. The server computes every displayed date from real createdAt metadata.
 6. For each season, provide noteIds containing the earliest and latest notes in that chapter, plus any other notes you drew on. For each forgotten idea, provide the single sourceNoteId where the idea appears. These source IDs are for server-side date computation, not prose.
 
 OPENING
 Write 2-4 sentences that interpret the person rather than inventorying the archive. Use at most two named specifics. It should feel like the opening of a letter from someone who knows them, never a table of contents.
 
 SEASONS
-Identify 3-6 emotional and identity chapters that genuinely emerge from the writing rather than dividing time into arbitrary calendar buckets. Give each season a title, noteIds containing the earliest and latest notes belonging to that chapter plus any others you drew on, and a full narrative paragraph of 4-8 sentences. Describe who they were, what they were reaching toward, and the register of their writing in that season. Only when the notes provide evidence, describe what appears to have prompted the transition into the next season; otherwise leave the cause unstated. Ground every season with 1-2 short citation tokens pointing to exact note lines, never quote text or a paragraph.
+Identify emotional and identity chapters that genuinely emerge from the writing rather than dividing time into arbitrary calendar buckets. Aim for 4-6 seasons total, not more. Every season narrative must contain 5-9 sentences. A two-sentence season is a failure. If a period genuinely lacks enough material for that depth, merge it into an adjacent season rather than producing a thin one. Give each season a title, noteIds containing the earliest and latest notes belonging to that chapter plus any others you drew on, and a full narrative paragraph. Describe who they were, what they were reaching toward, and the register of their writing in that season. Only when the notes provide evidence, describe what appears to have prompted the transition into the next season; otherwise leave the cause unstated. Every season must include at least one citation token pointing to an exact note line and at least one concrete non-quoted specific, such as a named project, a tracked number, or a recurring artifact.
 
 LANGUAGE
-Write one substantial paragraph about what the writing style itself reveals beyond subject matter. Notice movements between terse and expansive writing, stretches dominated by lists or by feeling, runs of motivational self-talk and what came before them, and meaningful gaps when writing stopped. Surface patterns the person is unlikely to have recognized alone.
+Write one substantial paragraph of 6-10 sentences about what the writing style itself reveals beyond subject matter. Notice movements between terse and expansive writing, stretches dominated by lists or by feeling, runs of motivational self-talk and what came before them, and meaningful gaps when writing stopped. Surface patterns the person is unlikely to have recognized alone.
 
 UNCHANGED
-Write one substantial paragraph on 2-3 important threads that may look abandoned but continue in a changed form: early passions wearing new clothes. Support each connection with evidence from both eras, ideally placing an old phrase beside a recent artifact. Trace transformation rather than disappearance, and derive every connection only from this archive.
+Write one substantial paragraph of 6-10 sentences on 2-3 important threads that may look abandoned but continue in a changed form: early passions wearing new clothes. Support each connection with evidence from both eras, ideally placing an old phrase beside a recent artifact. Trace transformation rather than disappearance, and derive every connection only from this archive.
 
 PATTERNS
-Write one paragraph about identity-level behavioral fingerprints, not recurring topics. Attend to how setbacks are processed, how ambition appears on the page compared with feeling, cycles of returning to abandoned things, and what courage looks like in these notes.
+Write one substantial paragraph of 6-10 sentences about identity-level behavioral fingerprints, not recurring topics. Attend to how setbacks are processed, how ambition appears on the page compared with feeling, cycles of returning to abandoned things, and what courage looks like in these notes.
 
 FORGOTTEN IDEAS
 Return 3-5 specific ideas that are genuinely forgotten or easily overlooked, with the sourceNoteId where each idea appears and a concise explanation of why each is worth revisiting. Do not write a date; the server will add whenWritten from that note's metadata.
 
 TENDER THREAD
-Write one paragraph that plainly recognizes emotional depth—grief, love, strain, faith—when it is present, and acknowledges that it matters. Exercise deliberate discretion across this entire first-impression output: never name deceased people, romantic partners, health conditions, or diagnoses. Gesture carefully, as in "there is grief here you have redrafted across years," without identifying who or what it concerns. Earn trust by combining real perception with privacy; deeper detail can wait for a later private setting.
+Write one substantial paragraph of 6-10 sentences that plainly recognizes emotional depth—grief, love, strain, faith—when it is present, and acknowledges that it matters. Exercise deliberate discretion across this entire first-impression output: never name deceased people, romantic partners, health conditions, or diagnoses. Gesture carefully, as in "there is grief here you have redrafted across years," without identifying who or what it concerns. Earn trust by combining real perception with privacy; deeper detail can wait for a later private setting.
 
 INTEGRITY RULES — ABSOLUTE
 1. Every date you write, including every whenWritten value and season period, must be copied from or derived strictly from the notes' createdAt fields. Never infer a date from note content or estimate one from memory. When precision is uncertain, use only the createdAt year.
@@ -592,11 +594,18 @@ function substituteCitationTokens(text, citations, notesById, verification) {
       continue;
     }
 
+    const formattedQuote = formatExtractedQuote(span, text.slice(token.end));
+    if (!formattedQuote) {
+      recordVerificationFailure(verification, { ...citation, reason: "empty_span" });
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
+      continue;
+    }
+
     verification.passed += 1;
     replacements.push({
       ...token,
       citationIndex,
-      replacement: `“${trimQuotedSpan(span)}”`
+      replacement: formattedQuote
     });
   }
 
@@ -647,6 +656,48 @@ function trimQuotedSpan(span) {
 
   const lastWhitespace = firstTwoHundred.search(/\s+\S*$/u);
   return (lastWhitespace > 0 ? firstTwoHundred.slice(0, lastWhitespace) : firstTwoHundred).trimEnd();
+}
+
+function formatExtractedQuote(span, followingText) {
+  let quotedText = trimQuotedSpan(span)
+    .replace(/["“”„‟″«»]/gu, "")
+    .trim();
+  quotedText = removeUnmatchedTrailingClosers(quotedText);
+
+  let terminalPunctuation = "";
+  const trailingPunctuation = /([.!?,;:]+)([)\]}]*)$/u.exec(quotedText);
+  if (trailingPunctuation) {
+    terminalPunctuation = [...trailingPunctuation[1]].reverse().find((character) => /[.!?]/u.test(character)) || "";
+    quotedText = `${quotedText.slice(0, trailingPunctuation.index)}${trailingPunctuation[2]}`.trimEnd();
+  }
+
+  if (!quotedText) {
+    return null;
+  }
+
+  const tokenEndsSentence = !followingText.trim() || /^[ \t]*(?:\r\n|\n|\r)/u.test(followingText);
+  return `“${quotedText}”${tokenEndsSentence ? terminalPunctuation : ""}`;
+}
+
+function removeUnmatchedTrailingClosers(value) {
+  const openingFor = { ")": "(", "]": "[", "}": "{" };
+  let result = value.trimEnd();
+
+  while (true) {
+    const match = /([)\]}])\s*$/u.exec(result);
+    if (!match) {
+      return result;
+    }
+
+    const closing = match[1];
+    const opening = openingFor[closing];
+    const openingCount = [...result].filter((character) => character === opening).length;
+    const closingCount = [...result].filter((character) => character === closing).length;
+    if (closingCount <= openingCount) {
+      return result;
+    }
+    result = result.slice(0, match.index).trimEnd();
+  }
 }
 
 function computeSeasonPeriod(noteIds, notesById, verification) {
