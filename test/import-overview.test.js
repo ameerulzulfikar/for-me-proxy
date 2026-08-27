@@ -23,7 +23,8 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   assert.match(upstreamBody.system, /NEVER WRITE A YEAR, MONTH, CALENDAR DATE, DATE RANGE, OR BARE AGE IN PROSE/);
   assert.match(upstreamBody.system, /Do not write phrases such as "at 19"/);
   assert.match(upstreamBody.system, /at the start of the real estate years/);
-  assert.match(upstreamBody.system, /Every season narrative must contain 5-9 sentences/);
+  assert.match(upstreamBody.system, /HARD REQUIREMENT: every individual season narrative must contain at least five complete sentences and no more than nine/);
+  assert.match(upstreamBody.system, /A season narrative under five sentences is invalid output/);
   assert.match(upstreamBody.system, /Aim for 4-6 seasons total, not more/);
   assert.match(upstreamBody.system, /Every season must include at least one citation token.*at least one concrete non-quoted specific/);
   assert.match(upstreamBody.system, /one substantial paragraph of 6-10 sentences about what the writing style itself reveals/);
@@ -36,11 +37,12 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   assert.equal(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.period, undefined);
   assert.ok(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.properties.sourceNoteId);
   assert.equal(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.properties.whenWritten, undefined);
-  assert.deepEqual(upstreamBody.tools[0].input_schema.required, ["opening", "seasons", "language", "unchanged", "patterns", "forgottenIdeas", "tenderThread"]);
-  assert.deepEqual(upstreamBody.tools[0].input_schema.properties.seasons.items.required, ["title", "narrative"]);
+  assert.deepEqual(upstreamBody.tools[0].input_schema.required, ["opening", "openingCitations", "seasons", "language", "languageCitations", "unchanged", "unchangedCitations", "patterns", "patternsCitations", "forgottenIdeas", "tenderThread", "tenderThreadCitations"]);
+  assert.deepEqual(upstreamBody.tools[0].input_schema.properties.seasons.items.required, ["title", "noteIds", "narrative", "citations"]);
+  assert.match(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.narrative.description, /5-9 sentences.*Fewer than five sentences is invalid output/);
   assert.equal(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.citations.minItems, 1);
   assert.equal(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.minItems, 3);
-  assert.deepEqual(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.required, ["title", "why"]);
+  assert.deepEqual(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.required, ["title", "sourceNoteId", "why", "citations"]);
 
   const prompt = upstreamBody.messages[0].content[0].text;
   assert.equal(prompt.startsWith("TIMELINE INDEX — SERVER-COMPUTED AND AUTHORITATIVE"), true);
@@ -124,7 +126,7 @@ test("import overview substitutes exact line locators, computes dates, and remov
         citations: []
       }
     ],
-    tenderThread: "This malformed token said {{cite:9}}. Care remains.",
+    tenderThread: "This malformed token said {{cite:9}}. You clearly redrafted this more than once. Care remains.",
     tenderThreadCitations: []
   });
   const restore = installProviderMock(context, () => successfulProviderResponse(providerInput));
@@ -140,10 +142,11 @@ test("import overview substitutes exact line locators, computes dates, and remov
   const result = JSON.parse(response.body);
   assert.equal(result.opening, "You wrote “exact phrase\r\nsecond exact line” in a list. This remains.");
   assert.deepEqual(result.openingCitations, [{ noteId: "n1", startLine: 1, endLine: 2 }]);
-  assert.equal(result.language, "This remains.");
+  assert.equal(result.language, "");
   assert.deepEqual(result.languageCitations, []);
   assert.equal(result.unchanged, "Another thought remains.");
-  assert.equal(result.patterns, "The pattern remains.");
+  assert.equal(result.patterns, "This empty source said “second exact line”. The pattern remains.");
+  assert.deepEqual(result.patternsCitations, [{ noteId: "n1", startLine: 2, endLine: 2 }]);
   assert.equal(result.tenderThread, "Care remains.");
   assert.equal(result.seasons[0].period, "Jan 2024 – Mar 2025");
   assert.equal(result.seasons[1].period, "Mar 2025");
@@ -154,20 +157,19 @@ test("import overview substitutes exact line locators, computes dates, and remov
   assert.equal(result.forgottenIdeas[1].whenWritten, "");
   assert.deepEqual(result.verification, {
     totalCitations: 15,
-    passed: 8,
-    failed: 7,
+    passed: 9,
+    failed: 6,
     failures: [
       { noteId: "", startLine: null, endLine: null, reason: "date_in_prose" },
-      { noteId: "n99", startLine: 1, endLine: 1, reason: "note_not_found" },
-      { noteId: "n1", startLine: 8, endLine: 9, reason: "invalid_locator" },
-      { noteId: "n1", startLine: 3, endLine: 3, reason: "empty_span" },
-      { noteId: "", startLine: null, endLine: null, reason: "invalid_locator" },
+      { noteId: "n99", startLine: 1, endLine: 1, citationIndex: 0, citationsAvailable: 1, reason: "note_not_found" },
+      { noteId: "n1", startLine: 8, endLine: 9, citationIndex: 0, citationsAvailable: 1, reason: "invalid_locator" },
+      { noteId: null, startLine: null, endLine: null, citationIndex: 9, citationsAvailable: 0, reason: "invalid_locator" },
       { noteId: "n99", startLine: null, endLine: null, reason: "note_not_found" },
       { noteId: "n99", startLine: null, endLine: null, reason: "note_not_found" }
     ]
   });
   assert.deepEqual(restore.loggedErrors, [
-    ["Import overview verification totalCitations=15 passed=8 failed=7"]
+    ["Import overview verification totalCitations=15 passed=9 failed=6"]
   ]);
 });
 
