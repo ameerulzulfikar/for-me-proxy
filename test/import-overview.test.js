@@ -36,6 +36,11 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   assert.equal(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.period, undefined);
   assert.ok(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.properties.sourceNoteId);
   assert.equal(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.properties.whenWritten, undefined);
+  assert.deepEqual(upstreamBody.tools[0].input_schema.required, ["opening", "seasons", "language", "unchanged", "patterns", "forgottenIdeas", "tenderThread"]);
+  assert.deepEqual(upstreamBody.tools[0].input_schema.properties.seasons.items.required, ["title", "narrative"]);
+  assert.equal(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.citations.minItems, 1);
+  assert.equal(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.minItems, 3);
+  assert.deepEqual(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.required, ["title", "why"]);
 
   const prompt = upstreamBody.messages[0].content[0].text;
   assert.equal(prompt.startsWith("TIMELINE INDEX — SERVER-COMPUTED AND AUTHORITATIVE"), true);
@@ -267,12 +272,65 @@ test("import overview reports max_tokens with provider usage instead of flatteni
   assert.match(JSON.stringify(restore.loggedErrors), /stop_reason=max_tokens.*output_tokens=32000/);
 });
 
-test("import overview degrades a partial tool payload to a detailed validation error", async (context) => {
+test("import overview tolerates missing metadata, wrong optional types, and unexpected fields", async (context) => {
   installProviderMock(context, () => providerResponse({
     content: [{
       type: "tool_use",
       name: "submit_import_overview",
-      input: { opening: "Partial output" }
+      input: {
+        opening: "Partial output",
+        seasons: [{ title: "A usable season", narrative: "A usable narrative", unexpected: true }],
+        language: 42,
+        patterns: { unexpected: true },
+        forgottenIdeas: [{ title: "An idea", why: "It may matter", unexpected: true }],
+        unexpectedTopLevel: true
+      }
+    }],
+    stopReason: "tool_use",
+    usage: { input_tokens: 100, output_tokens: 200 }
+  }));
+  const response = createResponse();
+
+  await handler(createRequest([note("one", "One", "Text", "2026-08-25T00:00:00.000Z")]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.opening, "Partial output");
+  assert.deepEqual(result.openingCitations, []);
+  assert.deepEqual(result.seasons, [{
+    title: "A usable season",
+    period: "",
+    narrative: "A usable narrative",
+    citations: []
+  }]);
+  assert.equal(result.language, "");
+  assert.equal(result.unchanged, "");
+  assert.equal(result.patterns, "");
+  assert.equal(result.tenderThread, "");
+  assert.deepEqual(result.forgottenIdeas, [{
+    title: "An idea",
+    whenWritten: "",
+    why: "It may matter",
+    citations: []
+  }]);
+  assert.deepEqual(result.verification, {
+    totalCitations: 1,
+    passed: 0,
+    failed: 1,
+    failures: [{ noteId: "", startLine: null, endLine: null, reason: "note_not_found" }]
+  });
+});
+
+test("import overview reports failed fields and key shapes for an unusable tool payload", async (context) => {
+  installProviderMock(context, () => providerResponse({
+    content: [{
+      type: "tool_use",
+      name: "submit_import_overview",
+      input: {
+        seasons: "not-an-array",
+        forgottenIdeas: [{ title: "An idea", unexpected: true }],
+        unexpectedTopLevel: true
+      }
     }],
     stopReason: "tool_use",
     usage: { input_tokens: 100, output_tokens: 200 }
@@ -282,17 +340,40 @@ test("import overview degrades a partial tool payload to a detailed validation e
   await handler(createRequest([note("one", "One", "Text", "2026-08-25T00:00:00.000Z")]), response);
 
   assert.equal(response.statusCode, 502);
-  assert.deepEqual(JSON.parse(response.body), {
-    error: {
-      message: "Import overview failed",
-      detail: {
-        type: "tool_input_validation_error",
-        message: "Provider tool input failed overview validation",
-        stop_reason: "tool_use",
-        usage: { input_tokens: 100, output_tokens: 200 }
-      }
-    }
+  assert.deepEqual(JSON.parse(response.body).error.detail, {
+    type: "tool_input_validation_error",
+    message: "Provider tool input failed overview validation",
+    failed_fields: [
+      { field: "opening", reason: "missing", expected: "non-empty string" },
+      { field: "seasons", reason: "wrong_type", expected: "array", actual: "string" }
+    ],
+    top_level_keys: ["seasons", "forgottenIdeas", "unexpectedTopLevel"],
+    first_season_keys: [],
+    first_forgotten_idea_keys: ["title", "unexpected"],
+    stop_reason: "tool_use",
+    usage: { input_tokens: 100, output_tokens: 200 }
   });
+});
+
+test("import overview distinguishes empty core fields as failed constraints", async (context) => {
+  installProviderMock(context, () => providerResponse({
+    content: [{
+      type: "tool_use",
+      name: "submit_import_overview",
+      input: { opening: "", seasons: [], forgottenIdeas: [] }
+    }],
+    stopReason: "tool_use",
+    usage: { input_tokens: 100, output_tokens: 200 }
+  }));
+  const response = createResponse();
+
+  await handler(createRequest([note("one", "One", "Text", "2026-08-25T00:00:00.000Z")]), response);
+
+  assert.equal(response.statusCode, 502);
+  assert.deepEqual(JSON.parse(response.body).error.detail.failed_fields, [
+    { field: "opening", reason: "failed_constraint", constraint: "must not be empty" },
+    { field: "seasons", reason: "failed_constraint", constraint: "must contain at least one object" }
+  ]);
 });
 
 test("import overview handles malformed partial content without entering verification", async (context) => {
@@ -309,6 +390,10 @@ test("import overview handles malformed partial content without entering verific
   assert.deepEqual(JSON.parse(response.body).error.detail, {
     type: "missing_tool_output",
     message: "Provider response did not contain the required overview tool output",
+    failed_fields: [{ field: "$", reason: "wrong_type", expected: "object", actual: "undefined" }],
+    top_level_keys: [],
+    first_season_keys: [],
+    first_forgotten_idea_keys: [],
     stop_reason: "end_turn",
     usage: { input_tokens: 100, output_tokens: 50 }
   });

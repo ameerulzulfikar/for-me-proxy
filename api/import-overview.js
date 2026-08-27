@@ -102,9 +102,9 @@ const overviewTool = {
               items: { type: "string" }
             },
             narrative: { type: "string" },
-            citations: citationsSchema
+            citations: { ...citationsSchema, minItems: 1 }
           },
-          required: ["title", "noteIds", "narrative", "citations"]
+          required: ["title", "narrative"]
         }
       },
       language: { type: "string" },
@@ -115,6 +115,7 @@ const overviewTool = {
       patternsCitations: citationsSchema,
       forgottenIdeas: {
         type: "array",
+        minItems: 3,
         maxItems: 5,
         items: {
           type: "object",
@@ -125,13 +126,13 @@ const overviewTool = {
             why: { type: "string" },
             citations: citationsSchema
           },
-          required: ["title", "sourceNoteId", "why", "citations"]
+          required: ["title", "why"]
         }
       },
       tenderThread: { type: "string" },
       tenderThreadCitations: citationsSchema
     },
-    required: ["opening", "openingCitations", "seasons", "language", "languageCitations", "unchanged", "unchangedCitations", "patterns", "patternsCitations", "forgottenIdeas", "tenderThread", "tenderThreadCitations"]
+    required: ["opening", "seasons", "language", "unchanged", "patterns", "forgottenIdeas", "tenderThread"]
   }
 };
 
@@ -247,19 +248,23 @@ export default async function handler(request, response) {
 
     const responseContent = Array.isArray(responseBody?.content) ? responseBody.content : [];
     const toolUse = responseContent.find((block) => isPlainObject(block) && block.type === "tool_use" && block.name === overviewTool.name);
-    const overview = validateOverview(toolUse?.input);
+    const validation = validateOverview(toolUse?.input);
 
-    if (!overview) {
+    if (!validation.overview) {
       console.error(`Import overview response failed validation stop_reason=${providerDiagnostics.stop_reason ?? "unknown"} output_tokens=${providerDiagnostics.usage?.output_tokens ?? "unknown"}`);
       return sendImportOverviewFailure(response, {
         type: toolUse ? "tool_input_validation_error" : "missing_tool_output",
         message: toolUse ? "Provider tool input failed overview validation" : "Provider response did not contain the required overview tool output",
+        failed_fields: validation.diagnostics.failedFields,
+        top_level_keys: validation.diagnostics.topLevelKeys,
+        first_season_keys: validation.diagnostics.firstSeasonKeys,
+        first_forgotten_idea_keys: validation.diagnostics.firstForgottenIdeaKeys,
         ...providerDiagnostics
       });
     }
 
     try {
-      return sendJson(response, 200, verifyOverview(overview, scaffoldedNotes));
+      return sendJson(response, 200, verifyOverview(validation.overview, scaffoldedNotes));
     } catch (error) {
       console.error("Import overview verification crashed", formatCaughtError(error));
       return sendImportOverviewFailure(response, {
@@ -459,93 +464,157 @@ function dropOldestNotes(notes, limit) {
 }
 
 function validateOverview(value) {
-  if (!isPlainObject(value) || typeof value.opening !== "string" || typeof value.language !== "string" || typeof value.unchanged !== "string" || typeof value.patterns !== "string" || typeof value.tenderThread !== "string" || !Array.isArray(value.seasons) || value.seasons.length < 3 || value.seasons.length > 6 || !Array.isArray(value.forgottenIdeas) || value.forgottenIdeas.length > 5) {
-    return null;
+  const shape = describeOverviewShape(value);
+  if (!isPlainObject(value)) {
+    return {
+      overview: null,
+      diagnostics: {
+        ...shape,
+        failedFields: [{ field: "$", reason: "wrong_type", expected: "object", actual: describeValueType(value) }]
+      }
+    };
   }
 
-  const openingCitations = validateCitations(value.openingCitations);
-  const languageCitations = validateCitations(value.languageCitations);
-  const unchangedCitations = validateCitations(value.unchangedCitations);
-  const patternsCitations = validateCitations(value.patternsCitations);
-  const tenderThreadCitations = validateCitations(value.tenderThreadCitations);
-  if ([openingCitations, languageCitations, unchangedCitations, patternsCitations, tenderThreadCitations].some((citations) => citations === null)) {
-    return null;
-  }
-
-  const seasons = [];
-  for (const season of value.seasons) {
-    if (!isPlainObject(season) || typeof season.title !== "string" || typeof season.narrative !== "string") {
-      return null;
-    }
-    const noteIds = validateNoteIds(season.noteIds);
-    const citations = validateCitations(season.citations);
-    if (!noteIds || !citations) {
-      return null;
-    }
-    seasons.push({ title: season.title, noteIds, narrative: season.narrative, citations });
-  }
-
-  const forgottenIdeas = [];
-  for (const idea of value.forgottenIdeas) {
-    if (!isPlainObject(idea) || typeof idea.title !== "string" || typeof idea.sourceNoteId !== "string" || !idea.sourceNoteId.trim() || typeof idea.why !== "string") {
-      return null;
-    }
-    const citations = validateCitations(idea.citations);
-    if (!citations) {
-      return null;
-    }
-    forgottenIdeas.push({ title: idea.title, sourceNoteId: idea.sourceNoteId.trim(), why: idea.why, citations });
+  const opening = normalizeString(value.opening);
+  const seasons = normalizeSeasons(value.seasons);
+  if (!opening.trim() && seasons.length === 0) {
+    return {
+      overview: null,
+      diagnostics: {
+        ...shape,
+        failedFields: describeUnusableOverviewFields(value)
+      }
+    };
   }
 
   return {
-    opening: value.opening,
-    openingCitations,
-    seasons,
-    language: value.language,
-    languageCitations,
-    unchanged: value.unchanged,
-    unchangedCitations,
-    patterns: value.patterns,
-    patternsCitations,
-    forgottenIdeas,
-    tenderThread: value.tenderThread,
-    tenderThreadCitations
+    overview: {
+      opening,
+      openingCitations: normalizeCitations(value.openingCitations),
+      seasons,
+      language: normalizeString(value.language),
+      languageCitations: normalizeCitations(value.languageCitations),
+      unchanged: normalizeString(value.unchanged),
+      unchangedCitations: normalizeCitations(value.unchangedCitations),
+      patterns: normalizeString(value.patterns),
+      patternsCitations: normalizeCitations(value.patternsCitations),
+      forgottenIdeas: normalizeForgottenIdeas(value.forgottenIdeas),
+      tenderThread: normalizeString(value.tenderThread),
+      tenderThreadCitations: normalizeCitations(value.tenderThreadCitations)
+    },
+    diagnostics: { ...shape, failedFields: [] }
   };
 }
 
-function validateNoteIds(value) {
-  if (!Array.isArray(value) || value.length === 0) {
-    return null;
+function normalizeSeasons(value) {
+  if (!Array.isArray(value)) {
+    return [];
   }
 
-  const noteIds = [];
-  for (const noteId of value) {
-    if (typeof noteId !== "string" || !noteId.trim()) {
-      return null;
-    }
-    noteIds.push(noteId.trim());
-  }
-  return noteIds;
+  return value.filter(isPlainObject).map((season) => ({
+    title: normalizeString(season.title),
+    noteIds: normalizeNoteIds(season.noteIds),
+    narrative: normalizeString(season.narrative),
+    citations: normalizeCitations(season.citations)
+  }));
 }
 
-function validateCitations(value) {
+function normalizeForgottenIdeas(value) {
   if (!Array.isArray(value)) {
-    return null;
+    return [];
   }
 
-  const citations = [];
-  for (const citation of value) {
-    if (!isPlainObject(citation) || typeof citation.noteId !== "string" || !Number.isInteger(citation.startLine) || !Number.isInteger(citation.endLine)) {
-      return null;
-    }
-    citations.push({
-      noteId: citation.noteId.trim(),
-      startLine: citation.startLine,
-      endLine: citation.endLine
+  return value.filter(isPlainObject).map((idea) => ({
+    title: normalizeString(idea.title),
+    sourceNoteId: normalizeString(idea.sourceNoteId).trim(),
+    why: normalizeString(idea.why),
+    citations: normalizeCitations(idea.citations)
+  }));
+}
+
+function normalizeNoteIds(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((noteId) => typeof noteId === "string" && noteId.trim())
+    .map((noteId) => noteId.trim());
+}
+
+function normalizeCitations(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((citation) => ({
+    noteId: isPlainObject(citation) ? normalizeString(citation.noteId).trim() : "",
+    startLine: isPlainObject(citation) ? normalizeLineNumber(citation.startLine) : 0,
+    endLine: isPlainObject(citation) ? normalizeLineNumber(citation.endLine) : 0
+  }));
+}
+
+function normalizeString(value) {
+  return typeof value === "string" ? value : "";
+}
+
+function normalizeLineNumber(value) {
+  if (Number.isInteger(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^\d+$/u.test(value)) {
+    return Number(value);
+  }
+  return 0;
+}
+
+function describeOverviewShape(value) {
+  const topLevelKeys = isPlainObject(value) ? Object.keys(value) : [];
+  const firstSeason = isPlainObject(value) && Array.isArray(value.seasons) ? value.seasons[0] : null;
+  const firstForgottenIdea = isPlainObject(value) && Array.isArray(value.forgottenIdeas) ? value.forgottenIdeas[0] : null;
+  return {
+    topLevelKeys,
+    firstSeasonKeys: isPlainObject(firstSeason) ? Object.keys(firstSeason) : [],
+    firstForgottenIdeaKeys: isPlainObject(firstForgottenIdea) ? Object.keys(firstForgottenIdea) : []
+  };
+}
+
+function describeUnusableOverviewFields(value) {
+  const failedFields = [];
+
+  if (!Object.hasOwn(value, "opening")) {
+    failedFields.push({ field: "opening", reason: "missing", expected: "non-empty string" });
+  } else if (typeof value.opening !== "string") {
+    failedFields.push({ field: "opening", reason: "wrong_type", expected: "string", actual: describeValueType(value.opening) });
+  } else if (!value.opening.trim()) {
+    failedFields.push({ field: "opening", reason: "failed_constraint", constraint: "must not be empty" });
+  }
+
+  if (!Object.hasOwn(value, "seasons")) {
+    failedFields.push({ field: "seasons", reason: "missing", expected: "array with at least one object" });
+  } else if (!Array.isArray(value.seasons)) {
+    failedFields.push({ field: "seasons", reason: "wrong_type", expected: "array", actual: describeValueType(value.seasons) });
+  } else {
+    value.seasons.forEach((season, index) => {
+      if (!isPlainObject(season)) {
+        failedFields.push({ field: `seasons[${index}]`, reason: "wrong_type", expected: "object", actual: describeValueType(season) });
+      }
     });
+    if (!value.seasons.some(isPlainObject)) {
+      failedFields.push({ field: "seasons", reason: "failed_constraint", constraint: "must contain at least one object" });
+    }
   }
 
-  return citations;
+  return failedFields;
+}
+
+function describeValueType(value) {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  return typeof value;
 }
 
 function verifyOverview(overview, notes) {
