@@ -78,126 +78,125 @@ const QUOTE_DATE_PATTERN = /\b(?:\d{4}-\d{1,2}(?:-\d{1,2})?|\d{1,2}[/-]\d{1,2}(?
 const LEADING_QUOTE_DATE_PATTERN = /^(?:on|in|at|by|from|since|until|as\s+of)?\s*(?:\d{4}-\d{1,2}(?:-\d{1,2})?|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:18|19|20|21)\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(?:18|19|20|21)\d{2})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+(?:18|19|20|21)\d{2})?)\b/iu;
 
 const systemPrompt = `
-You are reading someone's complete personal note archive across many years: every word they have supplied. Do not summarize it. Describe who this person is, what keeps occupying them, and what has quietly endured. Write every section in the second person. Always return the result through the provided tool.
+Someone has just handed you everything they've written down for years — thousands of private notes, kept for themselves, never meant to be read like this. Your job is to tell them what you see.
 
-WRITING RULES — PROMINENT AND OVERRIDING
-These rules override any instinct toward literary style.
+This is the first thing they'll read after trusting you with all of it. They're deciding, in the next minute, whether that was a good idea. So don't summarise their notes back to them. They know what's in there. Tell them who they seem to be.
 
-VOICE — APPLIES EVERYWHERE: Write like a perceptive friend describing someone they have come to know. Be warm, plain, and direct. Use short declarative sentences. Contractions are fine. Use second person throughout. Do not write in a literary style. Do not use metaphors about the archive. Do not add dramatic flourishes or rhetorical questions. Never sound therapeutic or clinical, and never say "you should". If a sentence sounds like it was written to impress, cut it.
+HOW TO WRITE
+Like a friend who's spent a long night reading and now wants to say what they noticed. Warm, plain, direct. Short sentences. Say things straight rather than building to them. No literary flourishes, no metaphors about the archive, nothing written to sound impressive. If a sentence could describe anyone, cut it. Write in second person.
 
-EVIDENCE: Every substantial claim must be anchored — a quote-by-reference locator or a concrete artifact (a named project, a tracked number, a recurring object or list). Claims without anchors are not worth making. One anchored observation beats three graceful generalisations. Structured source IDs anchor chronology; never use a written date as prose evidence.
+HOW TO SEE
+Be generous and be honest — both, not one softened by the other. Generous means assuming this person is capable and had reasons; where two readings fit the evidence, take the one that credits them with agency rather than the one that makes them a victim of their own patterns. Honest means saying the difficult thing when you see it, without moralising, advising, or softening it into a compliment.
 
-UNCERTAINTY: Do not hedge in portrait. Put only well-supported claims there and state them directly. In later sections, where a reading is genuinely uncertain, say so in plain words ("I might be reading too much into this", "you'd know better than I would"). Where two readings both fit the evidence, name both.
+Use their own stated reasons for what they did. Where motive is genuinely unclear, say so, or hold both readings. Never impose a familiar story shape on a life just because it's a shape you recognise.
 
-MOTIVE: When describing why this person did something, use the reasons they themselves state in the notes. Where motive is ambiguous, present the competing readings rather than choosing one. Do not default to the familiar narrative shape of ambition pulling someone away from what matters. That framing is often wrong and reads as pity. Someone taking a large risk may be doing it deliberately, with clear eyes about the cost, for an upside they judged worth it. If the notes show frustration with a previous situation, or an explicit desire for a bigger outcome, that is the motive and must be represented. The closing tension sentence of portrait must reflect the person's own stated reasoning, not an outsider's moral reading of it.
+Anything you claim should rest on something specific — a line they wrote, a project they named, a number they tracked, a thing they did repeatedly. An observation with evidence beats three without. And somewhere in here, tell them at least two things they probably haven't put into words about themselves: a pattern only visible across years, a contradiction between two parts of their life, something that stayed constant while they thought they were changing.
 
-INSIGHT REQUIREMENT: At least two observations across the whole response must be things the person likely has NOT articulated about themselves — a pattern only visible across years, a contradiction between two areas of their notes, or a continuity they wouldn't have named. Offer these as observations, never as verdicts, and always with their evidence attached. Do not moralise or advise.
+Where you're unsure, say so plainly. 'I might be reading too much into this.' 'You'd know better than I would.' That honesty makes you trustworthy, not weak.
 
-DEPTH OVER COVERAGE: Your job is depth, not coverage. It is better to say three things with real evidence and real thought than to list ten things briefly. Develop each observation: name the evidence, explain what it may reveal, and connect it to another concrete part of the notes where the connection is real. Do not write summary sentences that could describe many people.
+WHAT NOT TO DO
+No personality types, no psychological frameworks, no diagnostic language. Never mention health conditions, treatments, therapy, or diagnoses. Never name or identify someone who died, or refer to them by relationship. Never name a partner or spouse — 'your wife' is fine, a name is not. You can acknowledge grief, love, and strain; do it without exposing the specifics. This holds everywhere, including in what you choose to quote.
 
-Do not add personality typing, psychological frameworks, or diagnostic language of any kind.
-
-HARD PRIVACY RULE — APPLIES TO THE ENTIRE RESPONSE
-Never name or reference health conditions, diagnoses, medical treatments, therapy or psychology appointments, deceased people by name or relationship detail, or romantic partners by name. This rule applies to every field, including portrait, forgotten-idea titles and explanations, tender, and questions. It also applies to quotes. Before choosing a locator, screen the entire cited line or line range. Never cite a line containing any of those specifics. Gesture without exposing private detail. No other instruction overrides this rule.
-
-SOURCE LOCATORS AND SERVER-COMPUTED DATES — ABSOLUTE
-The user message begins with a server-computed timeline index, followed by notes labelled n1, n2, and so on in chronological order. Every line of note text is prefixed with its note ID and line number, such as "n412|L7|".
-1. NEVER WRITE QUOTE TEXT YOURSELF. To quote the person, insert a token such as {{cite:0}} at the exact position where the quote belongs in the prose. Then put { noteId, startLine, endLine } at index 0 of that section's citations array. The server, not you, will extract and insert the exact words from those lines.
-2. Treat each citation token as a quoted phrase so the surrounding prose is grammatical after substitution. The {{cite:N}} token must sit in a grammatically natural position within its sentence, with connecting words leading into it, such as "writing that {{cite:0}}" or "you called it {{cite:0}}". Never append a token after a complete sentence. Never place two tokens next to each other. Use no more than one citation token in any sentence. Example: You wrote {{cite:0}} in the middle of a grocery list. Choose quotes for emotional or revealing weight, not as decoration. Prefer a short striking line over a bland factual one. The sentence around a quote must say what the line reveals; do not merely introduce it. Do not choose a quoted span whose main content is a calendar date.
-3. Citation indexes start at 0 and refer only to the citations array beside that section. Use an inclusive line range. Never put quote text in a citation object or anywhere else in your response.
-4. For portrait, character, preoccupations, throughLine, and tender, use the correspondingly named top-level citations array. Each forgotten idea has its own citations array. Questions have no citations and must not contain citation tokens. Every {{cite:N}} token must have a locator at index N in that section's citations array; a token without its matching locator is invalid. Include only locators used by tokens in that section. If there are no tokens, return an empty citations array.
-5. NEVER WRITE A YEAR, MONTH, CALENDAR DATE, DATE RANGE, OR BARE AGE IN PROSE. Do not write phrases such as "at 19"; describe the life stage instead. Use relative language that cannot be mistaken for a date: "early on", "years later", "in the last stretch", "at the start of the real estate years", or "shortly after". For example, write "early in your working life" instead of an age, and "years later, the project returned" instead of naming a year. Do not produce period or whenWritten fields. The server computes every displayed date from real createdAt metadata.
-6. For each forgotten idea, provide the single sourceNoteId where the idea appears. This source ID is for server-side date computation, not prose.
-
-PORTRAIT — THE HEADLINE
-Write 6-10 sentences answering "who is this person?" plainly and confidently, as you would describe a friend to someone who has not met them. Use the opening 1-2 sentences to place them concretely: where they live and work, what they do for a living, and their family situation when the notes establish it. State these facts flatly and without commentary. Compress the inventory of achievements, awards, and venture names to at most two sentences total. Get to who they are quickly. The direct character claims and closing tension sentence are the point, not the résumé. Respect the hard privacy rule throughout. End with exactly one sentence naming the central tension of their life as these notes show it. It must reflect their own stated reasoning about what they are chasing and the cost or tradeoff they knowingly accepted, not an outsider's tragic reading. Make that closing sentence the single most quotable line in the response. Do not hedge anywhere in portrait.
-
-CHARACTER — THE DEEPER READ
-Write 8-12 sentences. Every high-level claim must immediately descend into the concrete behaviour, quoted line, repeated artifact, named project, tracked number, object, or list that produced the claim. Abstraction alone is worthless. The point is the claim plus its dissection. Include at least one observation the person probably has not articulated about themselves. You may hedge here when the evidence genuinely leaves room for another reading.
-
-PREOCCUPATIONS
-Write 5-8 sentences about what they cannot stop returning to. Identify the underlying concerns, not merely the subjects they mention. Explain why those concerns keep returning, with evidence. Do not turn this into a list of topics.
-
-THROUGHLINE
-Write 5-8 sentences about what stayed constant while the surface changed. Support the throughline with evidence from both early and recent material. Trace transformation rather than disappearance. Derive every connection only from this archive.
-
-FORGOTTEN IDEAS
-Return 4-5 specific ideas that are genuinely forgotten or easily overlooked, with the sourceNoteId where each idea appears and a concise explanation of why each is worth revisiting. Do not write a date; the server will add whenWritten from that note's metadata.
-
-TENDER
-Write 4-6 sentences and no more. Acknowledge emotional depth with care when it is present. Recognize that it matters without exposing private specifics. Keep this restrained.
-
-QUESTIONS
-Return exactly three questions with no citations. Ask what you would genuinely want to ask this person and what only their own archive could answer. Write each in second person. Keep each short and curious. They must be genuine questions, never rhetorical ones.
-
-LENGTH
-Leave the reader wanting more, not feeling finished. Cut anything that merely restates another section.
-
-INTEGRITY RULES — ABSOLUTE
-1. Every date in the response, including every whenWritten value, must be copied from or derived strictly from the notes' createdAt fields. Never infer a date from note content or estimate one from memory. When precision is uncertain, use only the createdAt year. The server alone adds these dates.
-2. Never state or imply a count greater than the number of notes actually supplied.
-3. You may observe correlation, but never declare causation without evidence. Outside portrait, mark uncertain interpretation explicitly in plain language. Where the notes do not establish a cause, say less. In portrait, include only claims supported strongly enough to state directly.
-4. Never fabricate or alter a quote. Verbatim means exact text from the notes.
-5. For thin or sparse archives, write shorter, honest sections rather than inventing depth.
+Thin archives get shorter honest answers, never invented depth.
 `.trim();
 
 const citationSchema = {
   type: "object",
   additionalProperties: false,
+  description: "An inclusive line locator used by the server to extract an exact quote from the supplied note scaffold. Never include quote text in a locator.",
   properties: {
-    noteId: { type: "string" },
-    startLine: { type: "integer", minimum: 1 },
-    endLine: { type: "integer", minimum: 1 }
+    noteId: {
+      type: "string",
+      description: "The structured note ID from the supplied chronological scaffold, such as n412."
+    },
+    startLine: {
+      type: "integer",
+      minimum: 1,
+      description: "The first prefixed line to quote, using its 1-based line number."
+    },
+    endLine: {
+      type: "integer",
+      minimum: 1,
+      description: "The last prefixed line to quote, inclusive, using its 1-based line number."
+    }
   },
   required: ["noteId", "startLine", "endLine"]
 };
 
-const citationsSchema = {
-  type: "array",
-  items: citationSchema
-};
+function createCitationsSchema(sectionName) {
+  return {
+    type: "array",
+    description: `Locators for {{cite:N}} tokens in ${sectionName} only. Token index N refers to locator index N in this array, starting at 0. Every token must have a matching locator. Include only locators used by tokens in this section; return an empty array when there are no tokens. Each locator is { noteId, startLine, endLine } with an inclusive line range. The server extracts the exact quote; never write quote text yourself.`,
+    items: citationSchema
+  };
+}
 
 const overviewTool = {
   name: "submit_import_overview",
-  description: "Return a perceptive, grounded reading of a personal note archive.",
+  description: `Return the first reading of the supplied personal note archive through this tool. The user message begins with a server-computed timeline index, followed by notes labelled n1, n2, and so on in chronological order. Every note-text line is prefixed with its structured note ID and 1-based line number, such as n412|L7|.
+
+QUOTE PROTOCOL: Never write or reconstruct quote text. Put a token such as {{cite:0}} at the grammatically natural position where the quote belongs, then put { noteId, startLine, endLine } at index 0 of that section's citations array. Line ranges are inclusive. Citation indexes start at 0 and are local to the adjacent section or forgotten idea. Every token must have a matching locator, and every locator must be used by a token. Use at most one token per sentence. Never place tokens next to each other or append one after a complete sentence; lead into it naturally with words such as "writing that" or "you called it". Choose short, revealing, substantive lines rather than trivial or decorative ones. Do not choose a span whose main content is a date. The server extracts, verifies, privacy-screens, and inserts the exact words.
+
+DATE AND SOURCE PROTOCOL: Never write a year, month, calendar date, date range, bare age, period field, or whenWritten field in any prose, title, explanation, or question. Use relative language such as "early on", "years later", or "in the last stretch". Structured source IDs establish chronology; dates written inside note text do not. The server computes displayed dates strictly from createdAt metadata. For each forgotten idea, return its single sourceNoteId so the server can compute whenWritten. Never state or imply a note count greater than the number supplied.`,
   input_schema: {
     type: "object",
     additionalProperties: false,
+    description: "The complete structured reading. All prose is second person. Quote tokens and locators must follow the tool protocol.",
     properties: {
-      portrait: { type: "string" },
-      portraitCitations: citationsSchema,
-      character: { type: "string" },
-      characterCitations: citationsSchema,
-      preoccupations: { type: "string" },
-      preoccupationsCitations: citationsSchema,
-      throughLine: { type: "string" },
-      throughLineCitations: citationsSchema,
+      portrait: {
+        type: "string",
+        description: "Who this person is, said plainly, the way you'd describe a friend to someone who hasn't met them. Place them concretely in a sentence or two — where they live, what they do, family situation where the notes establish it — then say what they're like. Keep achievements and venture names compressed. End with one sentence naming the central tension of their life as they themselves seem to understand it; make it the most quotable line in the response. Don't hedge here. If quoting, insert only a {{cite:N}} token in a grammatically natural position; never write quote text or dates."
+      },
+      portraitCitations: createCitationsSchema("portrait"),
+      read: {
+        type: "string",
+        description: "The deeper look: what they're like underneath, what they keep returning to, and what has stayed constant while the surface changed. Connect these rather than treating them as separate topics. Every claim descends into the specific behaviour, quoted line, named project or tracked number behind it. Hedge here where the evidence genuinely leaves room for another reading. If quoting, insert only a {{cite:N}} token in a grammatically natural position; never write quote text or dates."
+      },
+      readCitations: createCitationsSchema("read"),
       forgottenIdeas: {
         type: "array",
         minItems: 4,
         maxItems: 5,
+        description: "4-5 specific ideas from the archive that are genuinely forgotten or easily overlooked, each with the sourceNoteId where it appears and a concise reason it's worth revisiting. Never write dates; the server derives whenWritten from sourceNoteId metadata.",
         items: {
           type: "object",
           additionalProperties: false,
+          description: "One overlooked idea and its single source reference.",
           properties: {
-            title: { type: "string" },
-            sourceNoteId: { type: "string" },
-            why: { type: "string" },
-            citations: citationsSchema
+            title: {
+              type: "string",
+              description: "A short, specific title for the overlooked idea. Do not include a date or citation token."
+            },
+            sourceNoteId: {
+              type: "string",
+              description: "The single structured note ID, such as n412, where this idea appears. The server uses that note's createdAt metadata to compute whenWritten."
+            },
+            why: {
+              type: "string",
+              description: "A concise reason this idea is worth revisiting. If quoting, insert only a {{cite:N}} token referring to this idea's citations array; never write quote text or dates."
+            },
+            citations: createCitationsSchema("this forgotten idea's why field")
           },
           required: ["title", "sourceNoteId", "why", "citations"]
         }
       },
-      tender: { type: "string" },
-      tenderCitations: citationsSchema,
+      tender: {
+        type: "string",
+        description: "Brief and restrained. Acknowledge emotional weight where it's present — grief, love, strain — always in the abstract, never with names, relationships or specifics. Must stand alone; never open with a transitional word implying removed content. If quoting, insert only a {{cite:N}} token in a grammatically natural position; never write quote text or dates."
+      },
+      tenderCitations: createCitationsSchema("tender"),
       questions: {
         type: "array",
         minItems: 3,
         maxItems: 3,
-        items: { type: "string" }
+        description: "Exactly three questions you'd genuinely want to ask this person, that only their own archive could answer. Second person, short, curious, never rhetorical. Questions have no citations: never include citation tokens, quote text, dates, or bare ages.",
+        items: {
+          type: "string",
+          description: "One short, genuine second-person question with no citation token, quote, date, or bare age."
+        }
       }
     },
-    required: ["portrait", "portraitCitations", "character", "characterCitations", "preoccupations", "preoccupationsCitations", "throughLine", "throughLineCitations", "forgottenIdeas", "tender", "tenderCitations", "questions"]
+    required: ["portrait", "portraitCitations", "read", "readCitations", "forgottenIdeas", "tender", "tenderCitations", "questions"]
   }
 };
 
@@ -411,9 +410,6 @@ function buildOverviewPrompt(notes) {
   return [
     buildTimelineIndex(notes),
     "",
-    "The timeline is reference material only. Do not write dates in prose or return date fields.",
-    "To quote, write only a {{cite:N}} token and a { noteId, startLine, endLine } locator in that section's citations array. Never write the quote text.",
-    "",
     "NOTES — CHRONOLOGICAL, FULL TEXT",
     noteBlocks.join("\n\n")
   ].join("\n");
@@ -565,12 +561,8 @@ function validateOverview(value) {
     overview: {
       portrait,
       portraitCitations: normalizeCitations(value.portraitCitations),
-      character: normalizeString(value.character),
-      characterCitations: normalizeCitations(value.characterCitations),
-      preoccupations: normalizeString(value.preoccupations),
-      preoccupationsCitations: normalizeCitations(value.preoccupationsCitations),
-      throughLine: normalizeString(value.throughLine),
-      throughLineCitations: normalizeCitations(value.throughLineCitations),
+      read: normalizeString(value.read),
+      readCitations: normalizeCitations(value.readCitations),
       forgottenIdeas: normalizeForgottenIdeas(value.forgottenIdeas),
       tender: normalizeString(value.tender),
       tenderCitations: normalizeCitations(value.tenderCitations),
@@ -669,9 +661,7 @@ function verifyOverview(overview, notes) {
   };
 
   const portrait = verifyProse(overview.portrait, overview.portraitCitations, notesById, verification);
-  const character = verifyProse(overview.character, overview.characterCitations, notesById, verification);
-  const preoccupations = verifyProse(overview.preoccupations, overview.preoccupationsCitations, notesById, verification);
-  const throughLine = verifyProse(overview.throughLine, overview.throughLineCitations, notesById, verification);
+  const read = verifyProse(overview.read, overview.readCitations, notesById, verification);
   const tender = verifyProse(overview.tender, overview.tenderCitations, notesById, verification);
 
   const forgottenIdeas = overview.forgottenIdeas.map((idea) => {
@@ -691,12 +681,8 @@ function verifyOverview(overview, notes) {
   return {
     portrait: portrait.text,
     portraitCitations: portrait.citations,
-    character: character.text,
-    characterCitations: character.citations,
-    preoccupations: preoccupations.text,
-    preoccupationsCitations: preoccupations.citations,
-    throughLine: throughLine.text,
-    throughLineCitations: throughLine.citations,
+    read: read.text,
+    readCitations: read.citations,
     forgottenIdeas,
     tender: tender.text,
     tenderCitations: tender.citations,
