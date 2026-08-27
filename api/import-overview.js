@@ -5,6 +5,77 @@ const MAX_COMBINED_NOTE_TEXT = 2_100_000; // Approximately 700,000 tokens at 3 c
 const MONTH_BREAKDOWN_MIN_NOTES = 12;
 const MAX_OUTPUT_TOKENS = 32_000;
 const PROVIDER_TIMEOUT_MS = 270_000;
+const HEALTH_PRIVACY_PATTERN = buildKeywordPattern([
+  "psychologist", "psychologists", "psychiatrist", "psychiatrists", "psychotherapy",
+  "therapy", "therapist", "therapists", "counselling", "counseling", "counsellor",
+  "counselor", "mental health care plan", "mental-health care plan", "psychology appointment",
+  "psychology appointments", "psychiatry appointment", "psychiatry appointments", "depression",
+  "anxiety disorder", "panic disorder", "bipolar disorder", "schizophrenia", "ocd", "adhd",
+  "ptsd", "autism", "eating disorder", "diagnosis", "diagnosed", "medical treatment",
+  "medical treatments", "treatment plan", "health condition", "medical condition", "chronic condition",
+  "chronic illness", "medical appointment", "medical appointments", "doctor appointment",
+  "doctor's appointment", "specialist appointment", "hospital treatment", "chemotherapy", "radiotherapy",
+  "surgery", "surgical", "medication", "medications", "prescription",
+  "antidepressant", "antidepressants", "antipsychotic", "antipsychotics", "sertraline",
+  "zoloft", "fluoxetine", "prozac", "escitalopram", "lexapro", "citalopram", "paroxetine",
+  "venlafaxine", "effexor", "duloxetine", "bupropion", "wellbutrin", "mirtazapine",
+  "amitriptyline", "nortriptyline", "diazepam", "valium", "lorazepam", "alprazolam",
+  "xanax", "clonazepam", "quetiapine", "olanzapine", "risperidone", "lithium",
+  "lamotrigine", "valproate", "ritalin", "concerta", "vyvanse", "dexamphetamine",
+  "dextroamphetamine", "adderall", "propranolol", "insulin", "metformin", "methotrexate",
+  "prednisone", "prednisolone", "hydrocortisone", "dupixent", "humira", "psoriasis", "eczema", "dermatitis",
+  "rosacea", "asthma", "diabetes", "cancer", "arthritis", "endometriosis", "pcos",
+  "epilepsy", "migraine", "migraines", "lupus", "multiple sclerosis", "crohn's disease",
+  "coeliac disease", "celiac disease", "irritable bowel syndrome", "ibs", "hypertension",
+  "high blood pressure", "heart disease", "kidney disease"
+]);
+const DEATH_CONTEXT_PATTERN = /\b(?:death|died|dead|deceased|passed away|passing away|funeral|grief|grieve|grieved|grieving|mourn|mourned|mourning|bereavement|loss|lost)\b/iu;
+const DECEASED_RELATIONSHIP_PATTERN = /\b(?:sister|brother|sibling|mother|mum|mom|father|dad|parent|daughter|son|child|grandmother|grandma|grandfather|grandpa|aunt|uncle|cousin|niece|nephew|wife|husband|spouse|partner|fiancé|fiancée|girlfriend|boyfriend)\b/iu;
+const PERSON_NAME_SOURCE = String.raw`[\p{Lu}][\p{L}\p{M}'’.-]{1,}`;
+const SPECIFIC_NAME_SOURCE = String.raw`(?!(?:You|Your|The|This|That|These|Those|There|When|While|After|Before|Since|During|Early|Later|Years|Months|Someone|Grief|Death|Loss|Family)\b)${PERSON_NAME_SOURCE}`;
+const NAMED_DECEASED_PATTERNS = [
+  new RegExp(String.raw`\b${SPECIFIC_NAME_SOURCE}(?:'s|’s)?\s+(?:death|funeral|passing|grief|loss)\b`, "u"),
+  new RegExp(String.raw`\b${SPECIFIC_NAME_SOURCE}\b[^.!?\n]{0,40}\b(?:died|passed away|is dead|was deceased|grief|grieving|mourning)\b`, "u"),
+  new RegExp(String.raw`\b(?:death|funeral|grief|grieving|mourning|loss|lost)\b[^.!?\n]{0,24}\b(?:of|for|over)?\s*${SPECIFIC_NAME_SOURCE}\b`, "u")
+];
+const PARTNER_RELATION_SOURCE = String.raw`(?:[Ww]ife|[Hh]usband|[Ss]pouse|[Pp]artner|[Ff]iancé|[Ff]iancée|[Gg]irlfriend|[Bb]oyfriend)`;
+const PARTNER_POSSESSIVE_SOURCE = String.raw`(?:[Yy]our|[Mm]y|[Hh]is|[Hh]er|[Tt]heir|[Tt]he)`;
+const PARTNER_NAME_PATTERNS = [
+  {
+    pattern: new RegExp(String.raw`\b(${PARTNER_POSSESSIVE_SOURCE}\s+${PARTNER_RELATION_SOURCE})(?:\s*,?\s*(?:named\s+)?)(${PERSON_NAME_SOURCE})\b`, "gu"),
+    replace: (_match, relationship) => relationship
+  },
+  {
+    pattern: new RegExp(String.raw`\b(${PERSON_NAME_SOURCE})\s*,?\s+(${PARTNER_POSSESSIVE_SOURCE}\s+${PARTNER_RELATION_SOURCE})\b`, "gu"),
+    replace: (_match, _name, relationship) => relationship
+  },
+  {
+    pattern: new RegExp(String.raw`\b(${PERSON_NAME_SOURCE})\s+(?:is|was)\s+(${PARTNER_POSSESSIVE_SOURCE}\s+${PARTNER_RELATION_SOURCE})\b`, "gu"),
+    replace: (_match, _name, relationship) => relationship
+  },
+  {
+    pattern: new RegExp(String.raw`(?<![Bb]usiness )(?<![Ww]ork )(?<![Cc]reative )(?<![Pp]roject )(?<![Vv]enture )(?<![Ii]nvestment )(?<![Cc]o-founder )(?<![Cc]ofounder )\b(${PARTNER_RELATION_SOURCE})(?:\s*,?\s*(?:named\s+)?)(${PERSON_NAME_SOURCE})\b`, "gu"),
+    replace: (_match, relationship) => relationship
+  },
+  {
+    pattern: new RegExp(String.raw`\b((?:married|marrying)\s+(?:to\s+)?|(?:marriage|wedding)\s+(?:to|with)\s+)(${PERSON_NAME_SOURCE})\b`, "gu"),
+    replace: (_match, leadIn) => `${leadIn}your partner`
+  },
+  {
+    pattern: new RegExp(String.raw`\b(you\s+and\s+)(${PERSON_NAME_SOURCE})(\s+(?:got\s+married|married))\b`, "gu"),
+    replace: (_match, leadIn, _name, ending) => `${leadIn}your partner${ending}`
+  },
+  {
+    pattern: new RegExp(String.raw`\b(${PERSON_NAME_SOURCE})(\s+and\s+you\s+(?:got\s+married|married))\b`, "gu"),
+    replace: (_match, _name, ending) => `your partner${ending}`
+  },
+  {
+    pattern: new RegExp(String.raw`\b(${PERSON_NAME_SOURCE})(\s+and\s+I\s+(?:got\s+married|married))\b`, "gu"),
+    replace: (_match, _name, ending) => `my partner${ending}`
+  }
+];
+const QUOTE_DATE_PATTERN = /\b(?:\d{4}-\d{1,2}(?:-\d{1,2})?|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:18|19|20|21)\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(?:18|19|20|21)\d{2})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+(?:18|19|20|21)\d{2})?)\b/iu;
+const LEADING_QUOTE_DATE_PATTERN = /^(?:on|in|at|by|from|since|until|as\s+of)?\s*(?:\d{4}-\d{1,2}(?:-\d{1,2})?|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:18|19|20|21)\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(?:18|19|20|21)\d{2})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+(?:18|19|20|21)\d{2})?)\b/iu;
 
 const systemPrompt = `
 You are reading someone's complete personal note archive across many years: every word they have supplied. Do not summarize it. Describe who this person is, what keeps occupying them, and what has quietly endured. Write every section in the second person. Always return the result through the provided tool.
@@ -18,6 +89,8 @@ EVIDENCE: Every substantial claim must be anchored — a quote-by-reference loca
 
 UNCERTAINTY: Do not hedge in portrait. Put only well-supported claims there and state them directly. In later sections, where a reading is genuinely uncertain, say so in plain words ("I might be reading too much into this", "you'd know better than I would"). Where two readings both fit the evidence, name both.
 
+MOTIVE: When describing why this person did something, use the reasons they themselves state in the notes. Where motive is ambiguous, present the competing readings rather than choosing one. Do not default to the familiar narrative shape of ambition pulling someone away from what matters. That framing is often wrong and reads as pity. Someone taking a large risk may be doing it deliberately, with clear eyes about the cost, for an upside they judged worth it. If the notes show frustration with a previous situation, or an explicit desire for a bigger outcome, that is the motive and must be represented. The closing tension sentence of portrait must reflect the person's own stated reasoning, not an outsider's moral reading of it.
+
 INSIGHT REQUIREMENT: At least two observations across the whole response must be things the person likely has NOT articulated about themselves — a pattern only visible across years, a contradiction between two areas of their notes, or a continuity they wouldn't have named. Offer these as observations, never as verdicts, and always with their evidence attached. Do not moralise or advise.
 
 DEPTH OVER COVERAGE: Your job is depth, not coverage. It is better to say three things with real evidence and real thought than to list ten things briefly. Develop each observation: name the evidence, explain what it may reveal, and connect it to another concrete part of the notes where the connection is real. Do not write summary sentences that could describe many people.
@@ -30,14 +103,14 @@ Never name or reference health conditions, diagnoses, medical treatments, therap
 SOURCE LOCATORS AND SERVER-COMPUTED DATES — ABSOLUTE
 The user message begins with a server-computed timeline index, followed by notes labelled n1, n2, and so on in chronological order. Every line of note text is prefixed with its note ID and line number, such as "n412|L7|".
 1. NEVER WRITE QUOTE TEXT YOURSELF. To quote the person, insert a token such as {{cite:0}} at the exact position where the quote belongs in the prose. Then put { noteId, startLine, endLine } at index 0 of that section's citations array. The server, not you, will extract and insert the exact words from those lines.
-2. Treat each citation token as a quoted phrase so the surrounding prose is grammatical after substitution. Example: You wrote {{cite:0}} in the middle of a grocery list. Choose quotes for emotional or revealing weight, not as decoration. Prefer a short striking line over a bland factual one. The sentence around a quote must say what the line reveals; do not merely introduce it.
+2. Treat each citation token as a quoted phrase so the surrounding prose is grammatical after substitution. The {{cite:N}} token must sit in a grammatically natural position within its sentence, with connecting words leading into it, such as "writing that {{cite:0}}" or "you called it {{cite:0}}". Never append a token after a complete sentence. Never place two tokens next to each other. Use no more than one citation token in any sentence. Example: You wrote {{cite:0}} in the middle of a grocery list. Choose quotes for emotional or revealing weight, not as decoration. Prefer a short striking line over a bland factual one. The sentence around a quote must say what the line reveals; do not merely introduce it. Do not choose a quoted span whose main content is a calendar date.
 3. Citation indexes start at 0 and refer only to the citations array beside that section. Use an inclusive line range. Never put quote text in a citation object or anywhere else in your response.
 4. For portrait, character, preoccupations, throughLine, and tender, use the correspondingly named top-level citations array. Each forgotten idea has its own citations array. Questions have no citations and must not contain citation tokens. Every {{cite:N}} token must have a locator at index N in that section's citations array; a token without its matching locator is invalid. Include only locators used by tokens in that section. If there are no tokens, return an empty citations array.
 5. NEVER WRITE A YEAR, MONTH, CALENDAR DATE, DATE RANGE, OR BARE AGE IN PROSE. Do not write phrases such as "at 19"; describe the life stage instead. Use relative language that cannot be mistaken for a date: "early on", "years later", "in the last stretch", "at the start of the real estate years", or "shortly after". For example, write "early in your working life" instead of an age, and "years later, the project returned" instead of naming a year. Do not produce period or whenWritten fields. The server computes every displayed date from real createdAt metadata.
 6. For each forgotten idea, provide the single sourceNoteId where the idea appears. This source ID is for server-side date computation, not prose.
 
 PORTRAIT — THE HEADLINE
-Write 6-10 sentences answering "who is this person?" plainly and confidently, as you would describe a friend to someone who has not met them. Include the concrete, ordinary facts that place them in the world when the notes establish them: where they live and work, what they do for a living, their family situation, and what they build. State these facts flatly and without commentary. Respect the hard privacy rule while doing so. Then make a few direct character claims that the evidence supports. End with exactly one sentence naming the central tension of their life as these notes show it: what they are chasing and what it seems to cost or compete with. Make that closing sentence the single most quotable line in the response. Do not hedge anywhere in portrait.
+Write 6-10 sentences answering "who is this person?" plainly and confidently, as you would describe a friend to someone who has not met them. Use the opening 1-2 sentences to place them concretely: where they live and work, what they do for a living, and their family situation when the notes establish it. State these facts flatly and without commentary. Compress the inventory of achievements, awards, and venture names to at most two sentences total. Get to who they are quickly. The direct character claims and closing tension sentence are the point, not the résumé. Respect the hard privacy rule throughout. End with exactly one sentence naming the central tension of their life as these notes show it. It must reflect their own stated reasoning about what they are chasing and the cost or tradeoff they knowingly accepted, not an outsider's tragic reading. Make that closing sentence the single most quotable line in the response. Do not hedge anywhere in portrait.
 
 CHARACTER — THE DEEPER READ
 Write 8-12 sentences. Every high-level claim must immediately descend into the concrete behaviour, quoted line, repeated artifact, named project, tracked number, object, or list that produced the claim. Abstraction alone is worthless. The point is the claim plus its dissection. Include at least one observation the person probably has not articulated about themselves. You may hedge here when the evidence genuinely leaves room for another reading.
@@ -422,6 +495,17 @@ function compareStrings(a, b) {
   return 0;
 }
 
+function buildKeywordPattern(keywords) {
+  const alternatives = [...keywords]
+    .sort((first, second) => second.length - first.length)
+    .map(escapeRegExp);
+  return new RegExp(`\\b(?:${alternatives.join("|")})\\b`, "iu");
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 function sanitizeNotes(notes) {
   const sanitized = [];
 
@@ -591,9 +675,10 @@ function verifyOverview(overview, notes) {
   const tender = verifyProse(overview.tender, overview.tenderCitations, notesById, verification);
 
   const forgottenIdeas = overview.forgottenIdeas.map((idea) => {
+    const title = verifyProse(idea.title, [], notesById, verification);
     const why = verifyProse(idea.why, idea.citations, notesById, verification);
     return {
-      title: idea.title,
+      title: title.text,
       whenWritten: computeNoteDate(idea.sourceNoteId, notesById, verification),
       why: why.text,
       citations: why.citations
@@ -621,8 +706,119 @@ function verifyOverview(overview, notes) {
 }
 
 function verifyProse(text, citations, notesById, verification) {
-  const withoutDates = stripDatesFromProse(text, verification);
+  const privacyScreened = screenProseForPrivacy(text, verification);
+  const withoutDates = stripDatesFromProse(privacyScreened, verification);
   return substituteCitationTokens(withoutDates, citations, notesById, verification);
+}
+
+function screenProseForPrivacy(text, verification) {
+  const removalRanges = [];
+  const redactions = [];
+
+  for (const range of findAllSentenceRanges(text)) {
+    const sentence = text.slice(range.start, range.end);
+    const removalReason = detectRemovalPrivacyReason(sentence);
+    if (removalReason) {
+      recordProsePrivacyFailure(verification, removalReason);
+      removalRanges.push(expandRangeThroughDanglingSentences(text, range));
+      continue;
+    }
+
+    const partnerRedaction = redactPartnerNames(sentence);
+    if (partnerRedaction.redacted) {
+      recordProsePrivacyFailure(verification, "privacy_partner");
+      redactions.push({ ...range, replacement: partnerRedaction.text });
+    }
+  }
+
+  const mergedRemovalRanges = mergeRanges(removalRanges);
+  const usableRedactions = redactions.filter((redaction) => !mergedRemovalRanges.some((range) => rangesOverlap(redaction, range)));
+  const operations = [
+    ...mergedRemovalRanges.map((range) => ({ ...range, kind: "removal" })),
+    ...usableRedactions.map((redaction) => ({ ...redaction, kind: "redaction" }))
+  ].sort((first, second) => second.start - first.start);
+  let screenedText = text;
+
+  for (const operation of operations) {
+    if (operation.kind === "redaction") {
+      screenedText = `${screenedText.slice(0, operation.start)}${operation.replacement}${screenedText.slice(operation.end)}`;
+    } else {
+      screenedText = removeTextRange(screenedText, operation);
+    }
+  }
+
+  return mergedRemovalRanges.length > 0 ? removeLeadingFragments(screenedText).trim() : screenedText.trim();
+}
+
+function findAllSentenceRanges(text) {
+  const ranges = [];
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    while (cursor < text.length && /\s/u.test(text[cursor])) {
+      cursor += 1;
+    }
+    if (cursor >= text.length) {
+      break;
+    }
+
+    const range = findSentenceRange(text, cursor, cursor + 1);
+    ranges.push(range);
+    cursor = Math.max(range.end, cursor + 1);
+  }
+
+  return ranges;
+}
+
+function detectRemovalPrivacyReason(value) {
+  if (HEALTH_PRIVACY_PATTERN.test(value)) {
+    return "privacy_health";
+  }
+  if (containsPrivateDeceasedReference(value)) {
+    return "privacy_deceased";
+  }
+  return null;
+}
+
+function detectQuotePrivacyReason(value) {
+  const removalReason = detectRemovalPrivacyReason(value);
+  if (removalReason) {
+    return removalReason;
+  }
+  return redactPartnerNames(value).redacted ? "privacy_partner" : null;
+}
+
+function containsPrivateDeceasedReference(value) {
+  if (!DEATH_CONTEXT_PATTERN.test(value)) {
+    return false;
+  }
+  return DECEASED_RELATIONSHIP_PATTERN.test(value)
+    || NAMED_DECEASED_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function redactPartnerNames(value) {
+  let text = value;
+  let redacted = false;
+
+  for (const { pattern, replace } of PARTNER_NAME_PATTERNS) {
+    pattern.lastIndex = 0;
+    text = text.replace(pattern, (...args) => {
+      redacted = true;
+      return replace(...args);
+    });
+  }
+
+  return { text, redacted };
+}
+
+function recordProsePrivacyFailure(verification, reason) {
+  verification.totalCitations += 1;
+  recordVerificationFailure(verification, {
+    noteId: "",
+    startLine: null,
+    endLine: null,
+    reason
+  });
 }
 
 function stripDatesFromProse(text, verification) {
@@ -652,6 +848,7 @@ function substituteCitationTokens(text, citations, notesById, verification) {
     rawIndex: match[1].trim()
   }));
   const invalidRanges = [];
+  const citationTokenRemovalRanges = [];
   const replacements = [];
 
   for (const token of tokens) {
@@ -679,6 +876,34 @@ function substituteCitationTokens(text, citations, notesById, verification) {
       continue;
     }
 
+    const privacyReason = detectQuotePrivacyReason(resolved.span);
+    if (privacyReason) {
+      recordCitationFailure(verification, citation, citationIndex, citations.length, privacyReason);
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
+      continue;
+    }
+
+    if (isDateDominatedQuote(resolved.span)) {
+      recordCitationFailure(verification, citation, citationIndex, citations.length, "date_in_quote");
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
+      continue;
+    }
+
+    const sentenceRange = findSentenceRange(text, token.start, token.end);
+    const previousReplacement = replacements[replacements.length - 1];
+    const hasQuoteInSentence = replacements.some((replacement) => rangesOverlap(replacement.sentenceRange, sentenceRange));
+    const hasNoInterveningProse = previousReplacement
+      && !/[\p{L}\p{N}]/u.test(text.slice(previousReplacement.end, token.start));
+    if (hasQuoteInSentence || hasNoInterveningProse) {
+      recordCitationFailure(verification, citation, citationIndex, citations.length, "quote_collision");
+      if (hasQuoteInSentence && hasNoInterveningProse) {
+        citationTokenRemovalRanges.push(findCitationTokenRemovalRange(text, token));
+      } else {
+        invalidRanges.push(sentenceRange);
+      }
+      continue;
+    }
+
     const formattedQuote = formatExtractedQuote(resolved.span, text.slice(token.end));
     if (!formattedQuote) {
       recordCitationFailure(verification, citation, citationIndex, citations.length, "empty_span");
@@ -690,6 +915,7 @@ function substituteCitationTokens(text, citations, notesById, verification) {
     replacements.push({
       ...token,
       citationIndex,
+      sentenceRange,
       replacement: formattedQuote,
       resolvedCitation: {
         noteId: citation.noteId,
@@ -701,15 +927,19 @@ function substituteCitationTokens(text, citations, notesById, verification) {
 
   const mergedInvalidRanges = mergeRanges(invalidRanges.map((range) => expandRangeThroughDanglingSentences(text, range)));
   const usableReplacements = replacements.filter((replacement) => !mergedInvalidRanges.some((range) => range.start <= replacement.start && replacement.end <= range.end));
+  const usableCitationTokenRemovals = citationTokenRemovalRanges.filter((removal) => !mergedInvalidRanges.some((range) => rangesOverlap(removal, range)));
   const operations = [
-    ...mergedInvalidRanges.map((range) => ({ ...range, replacement: "" })),
-    ...usableReplacements
+    ...mergedInvalidRanges.map((range) => ({ ...range, kind: "sentence_removal" })),
+    ...usableCitationTokenRemovals.map((range) => ({ ...range, kind: "token_removal" })),
+    ...usableReplacements.map((replacement) => ({ ...replacement, kind: "replacement" }))
   ].sort((a, b) => b.start - a.start);
   let verifiedText = text;
 
   for (const operation of operations) {
-    if (operation.replacement) {
+    if (operation.kind === "replacement") {
       verifiedText = `${verifiedText.slice(0, operation.start)}${operation.replacement}${verifiedText.slice(operation.end)}`;
+    } else if (operation.kind === "token_removal") {
+      verifiedText = `${verifiedText.slice(0, operation.start)}${verifiedText.slice(operation.end)}`;
     } else {
       verifiedText = removeTextRange(verifiedText, operation);
     }
@@ -726,6 +956,28 @@ function substituteCitationTokens(text, citations, notesById, verification) {
       .sort(([firstIndex], [secondIndex]) => firstIndex - secondIndex)
       .map(([, citation]) => citation)
   };
+}
+
+function isDateDominatedQuote(value) {
+  const trimmed = value.trim();
+  if (!QUOTE_DATE_PATTERN.test(trimmed)) {
+    return false;
+  }
+  if (LEADING_QUOTE_DATE_PATTERN.test(trimmed)) {
+    return true;
+  }
+
+  const withoutDate = trimmed.replace(QUOTE_DATE_PATTERN, " ");
+  const remainingWords = withoutDate.match(/[\p{L}\p{N}]+/gu) || [];
+  return remainingWords.length <= 4;
+}
+
+function findCitationTokenRemovalRange(text, token) {
+  let start = token.start;
+  while (start > 0 && /[ \t]/u.test(text[start - 1])) {
+    start -= 1;
+  }
+  return { start, end: token.end };
 }
 
 function resolveCitationSpan(note, citation) {
@@ -992,6 +1244,10 @@ function mergeRanges(ranges) {
     }
   }
   return merged;
+}
+
+function rangesOverlap(first, second) {
+  return first.start < second.end && second.start < first.end;
 }
 
 function removeTextRanges(text, ranges) {

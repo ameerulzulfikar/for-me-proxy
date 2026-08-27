@@ -28,7 +28,20 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   assert.match(upstreamBody.system, /HARD PRIVACY RULE — APPLIES TO THE ENTIRE RESPONSE/);
   assert.match(upstreamBody.system, /health conditions, diagnoses, medical treatments, therapy or psychology appointments, deceased people by name or relationship detail, or romantic partners by name/);
   assert.match(upstreamBody.system, /Never cite a line containing any of those specifics/);
+  assert.match(upstreamBody.system, /MOTIVE:[\s\S]*use the reasons they themselves state in the notes/);
+  assert.match(upstreamBody.system, /Where motive is ambiguous, present the competing readings rather than choosing one/);
+  assert.match(upstreamBody.system, /Do not default to the familiar narrative shape of ambition pulling someone away from what matters/);
+  assert.match(upstreamBody.system, /frustration with a previous situation, or an explicit desire for a bigger outcome, that is the motive/);
+  assert.match(upstreamBody.system, /closing tension sentence of portrait must reflect the person's own stated reasoning/);
+  assert.match(upstreamBody.system, /token must sit in a grammatically natural position within its sentence/);
+  assert.match(upstreamBody.system, /writing that \{\{cite:0\}\}.*you called it \{\{cite:0\}\}/);
+  assert.match(upstreamBody.system, /Never append a token after a complete sentence/);
+  assert.match(upstreamBody.system, /Use no more than one citation token in any sentence/);
+  assert.match(upstreamBody.system, /Do not choose a quoted span whose main content is a calendar date/);
   assert.match(upstreamBody.system, /PORTRAIT — THE HEADLINE[\s\S]*Write 6-10 sentences[\s\S]*End with exactly one sentence naming the central tension/);
+  assert.match(upstreamBody.system, /opening 1-2 sentences to place them concretely/);
+  assert.match(upstreamBody.system, /inventory of achievements, awards, and venture names to at most two sentences total/);
+  assert.match(upstreamBody.system, /character claims and closing tension sentence are the point, not the résumé/);
   assert.match(upstreamBody.system, /Do not hedge anywhere in portrait/);
   assert.match(upstreamBody.system, /CHARACTER — THE DEEPER READ[\s\S]*Write 8-12 sentences[\s\S]*immediately descend into the concrete behaviour/);
   assert.match(upstreamBody.system, /PREOCCUPATIONS[\s\S]*Write 5-8 sentences/);
@@ -227,6 +240,122 @@ test("import overview wraps extracted text with one balanced quote pair and clea
   assert.equal((result.portrait.match(/“/gu) || []).length, 2);
   assert.equal((result.portrait.match(/”/gu) || []).length, 2);
   assert.doesNotMatch(result.portrait, /["„‟″«»]/u);
+});
+
+test("import overview removes private health and deceased prose while redacting only partner names", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "You see a psychologist regularly. Sertraline appears in your routine. You keep building.",
+    character: "Your mother died and the loss changed your priorities. A death in the family still matters. Sarah died, and you still carry that grief. Someone close to you is part of your grief. You keep showing up.",
+    preoccupations: "Your wife Priya supports your work. Ameer keeps his own name. Your child Zara appears in the plans. Your business partner Ravi appears in the launch notes.",
+    throughLine: "You married Priya deliberately. Your appetite for risk stayed constant.",
+    forgottenIdeas: [{
+      title: "A therapy tracker.",
+      sourceNoteId: "n1",
+      why: "The small tool may still be useful.",
+      citations: []
+    }],
+    questions: ["How did psoriasis change you?", "What do you still want?", "What keeps returning?"]
+  });
+  const restore = installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Safe source text", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You keep building.");
+  assert.equal(result.character, "A death in the family still matters. Someone close to you is part of your grief. You keep showing up.");
+  assert.equal(result.preoccupations, "Your wife supports your work. Ameer keeps his own name. Your child Zara appears in the plans. Your business partner Ravi appears in the launch notes.");
+  assert.equal(result.throughLine, "You married your partner deliberately. Your appetite for risk stayed constant.");
+  assert.equal(result.forgottenIdeas[0].title, "");
+  assert.equal(result.forgottenIdeas[0].whenWritten, "Aug 2026");
+  assert.deepEqual(result.questions, ["", "What do you still want?", "What keeps returning?"]);
+  assert.deepEqual(result.verification, {
+    totalCitations: 9,
+    passed: 1,
+    failed: 8,
+    failures: [
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_health" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_health" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_deceased" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_deceased" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_partner" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_partner" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_health" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_health" }
+    ]
+  });
+  assert.deepEqual(restore.loggedErrors, [
+    ["Import overview verification totalCitations=9 passed=1 failed=8"]
+  ]);
+});
+
+test("import overview rejects private extracted quotes before substitution", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "You wrote {{cite:0}}. You wrote {{cite:1}}. You wrote {{cite:2}}. You also wrote {{cite:3}}.",
+    portraitCitations: [
+      { noteId: "n1", startLine: 1, endLine: 1 },
+      { noteId: "n1", startLine: 2, endLine: 2 },
+      { noteId: "n1", startLine: 3, endLine: 3 },
+      { noteId: "n1", startLine: 4, endLine: 4 }
+    ]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "My therapist told me to rest\nMy sister died when I was young\nMy wife Priya backed the move\nI chose the bigger outcome", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You also wrote “I chose the bigger outcome”.");
+  assert.deepEqual(result.portraitCitations, [{ noteId: "n1", startLine: 4, endLine: 4 }]);
+  assert.deepEqual(result.verification, {
+    totalCitations: 4,
+    passed: 1,
+    failed: 3,
+    failures: [
+      { noteId: "n1", startLine: 1, endLine: 1, citationIndex: 0, citationsAvailable: 4, reason: "privacy_health" },
+      { noteId: "n1", startLine: 2, endLine: 2, citationIndex: 1, citationsAvailable: 4, reason: "privacy_deceased" },
+      { noteId: "n1", startLine: 3, endLine: 3, citationIndex: 2, citationsAvailable: 4, reason: "privacy_partner" }
+    ]
+  });
+});
+
+test("import overview rejects date-led quotes and keeps at most one quote per sentence", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "You marked the change by writing {{cite:1}}. You said {{cite:0}} {{cite:2}}. A clean close remains.",
+    portraitCitations: [
+      { noteId: "n1", startLine: 1, endLine: 1 },
+      { noteId: "n1", startLine: 2, endLine: 2 },
+      { noteId: "n1", startLine: 3, endLine: 3 }
+    ]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "there's no room for error\nOn 20th December 2025, I quit my job of 6 years\nI chose the bigger outcome", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You said “there's no room for error”. A clean close remains.");
+  assert.equal((result.portrait.match(/“/gu) || []).length, 1);
+  assert.doesNotMatch(result.portrait, /20th|December|2025/u);
+  assert.deepEqual(result.portraitCitations, [{ noteId: "n1", startLine: 1, endLine: 1 }]);
+  assert.deepEqual(result.verification, {
+    totalCitations: 3,
+    passed: 1,
+    failed: 2,
+    failures: [
+      { noteId: "n1", startLine: 2, endLine: 2, citationIndex: 1, citationsAvailable: 3, reason: "date_in_quote" },
+      { noteId: "n1", startLine: 3, endLine: 3, citationIndex: 2, citationsAvailable: 3, reason: "quote_collision" }
+    ]
+  });
 });
 
 test("import overview makes exactly one provider attempt on failure", async (context) => {
