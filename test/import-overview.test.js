@@ -23,26 +23,49 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   assert.match(upstreamBody.system, /NEVER WRITE A YEAR, MONTH, CALENDAR DATE, DATE RANGE, OR BARE AGE IN PROSE/);
   assert.match(upstreamBody.system, /Do not write phrases such as "at 19"/);
   assert.match(upstreamBody.system, /at the start of the real estate years/);
-  assert.match(upstreamBody.system, /HARD REQUIREMENT: every individual season narrative must contain at least five complete sentences and no more than nine/);
-  assert.match(upstreamBody.system, /A season narrative under five sentences is invalid output/);
-  assert.match(upstreamBody.system, /Aim for 4-6 seasons total, not more/);
-  assert.match(upstreamBody.system, /Every season must include at least one citation token.*at least one concrete non-quoted specific/);
-  assert.match(upstreamBody.system, /one substantial paragraph of 6-10 sentences about what the writing style itself reveals/);
+  assert.match(upstreamBody.system, /VOICE — APPLIES EVERYWHERE:.*warm, plain, and direct.*short declarative sentences.*second person throughout/s);
+  assert.match(upstreamBody.system, /Do not write in a literary style.*Do not use metaphors about the archive.*Do not add dramatic flourishes or rhetorical questions/s);
+  assert.match(upstreamBody.system, /HARD PRIVACY RULE — APPLIES TO THE ENTIRE RESPONSE/);
+  assert.match(upstreamBody.system, /health conditions, diagnoses, medical treatments, therapy or psychology appointments, deceased people by name or relationship detail, or romantic partners by name/);
+  assert.match(upstreamBody.system, /Never cite a line containing any of those specifics/);
+  assert.match(upstreamBody.system, /PORTRAIT — THE HEADLINE[\s\S]*Write 6-10 sentences[\s\S]*End with exactly one sentence naming the central tension/);
+  assert.match(upstreamBody.system, /Do not hedge anywhere in portrait/);
+  assert.match(upstreamBody.system, /CHARACTER — THE DEEPER READ[\s\S]*Write 8-12 sentences[\s\S]*immediately descend into the concrete behaviour/);
+  assert.match(upstreamBody.system, /PREOCCUPATIONS[\s\S]*Write 5-8 sentences/);
+  assert.match(upstreamBody.system, /THROUGHLINE[\s\S]*evidence from both early and recent material/);
+  assert.match(upstreamBody.system, /TENDER[\s\S]*Write 4-6 sentences and no more/);
+  assert.match(upstreamBody.system, /QUESTIONS[\s\S]*exactly three questions with no citations/);
+  assert.match(upstreamBody.system, /Leave the reader wanting more, not feeling finished/);
   assert.match(upstreamBody.system, /Choose quotes for emotional or revealing weight, not as decoration/);
   assert.match(upstreamBody.system, /Your job is depth, not coverage/);
-  assert.ok(upstreamBody.tools[0].input_schema.properties.openingCitations);
-  assert.ok(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.citations);
-  assert.deepEqual(Object.keys(upstreamBody.tools[0].input_schema.properties.openingCitations.items.properties), ["noteId", "startLine", "endLine"]);
-  assert.ok(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.noteIds);
-  assert.equal(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.period, undefined);
+  const schema = upstreamBody.tools[0].input_schema;
+  assert.deepEqual(Object.keys(schema.properties), [
+    "portrait",
+    "portraitCitations",
+    "character",
+    "characterCitations",
+    "preoccupations",
+    "preoccupationsCitations",
+    "throughLine",
+    "throughLineCitations",
+    "forgottenIdeas",
+    "tender",
+    "tenderCitations",
+    "questions"
+  ]);
+  assert.deepEqual(Object.keys(schema.properties.portraitCitations.items.properties), ["noteId", "startLine", "endLine"]);
+  assert.equal(schema.properties.seasons, undefined);
+  assert.equal(schema.properties.language, undefined);
+  assert.equal(schema.properties.patterns, undefined);
   assert.ok(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.properties.sourceNoteId);
   assert.equal(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.properties.whenWritten, undefined);
-  assert.deepEqual(upstreamBody.tools[0].input_schema.required, ["opening", "openingCitations", "seasons", "language", "languageCitations", "unchanged", "unchangedCitations", "patterns", "patternsCitations", "forgottenIdeas", "tenderThread", "tenderThreadCitations"]);
-  assert.deepEqual(upstreamBody.tools[0].input_schema.properties.seasons.items.required, ["title", "noteIds", "narrative", "citations"]);
-  assert.match(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.narrative.description, /5-9 sentences.*Fewer than five sentences is invalid output/);
-  assert.equal(upstreamBody.tools[0].input_schema.properties.seasons.items.properties.citations.minItems, 1);
-  assert.equal(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.minItems, 3);
+  assert.deepEqual(schema.required, ["portrait", "portraitCitations", "character", "characterCitations", "preoccupations", "preoccupationsCitations", "throughLine", "throughLineCitations", "forgottenIdeas", "tender", "tenderCitations", "questions"]);
+  assert.equal(schema.properties.forgottenIdeas.minItems, 4);
+  assert.equal(schema.properties.forgottenIdeas.maxItems, 5);
   assert.deepEqual(upstreamBody.tools[0].input_schema.properties.forgottenIdeas.items.required, ["title", "sourceNoteId", "why", "citations"]);
+  assert.equal(schema.properties.questions.minItems, 3);
+  assert.equal(schema.properties.questions.maxItems, 3);
+  assert.deepEqual(schema.properties.questions.items, { type: "string" });
 
   const prompt = upstreamBody.messages[0].content[0].text;
   assert.equal(prompt.startsWith("TIMELINE INDEX — SERVER-COMPUTED AND AUTHORITATIVE"), true);
@@ -55,9 +78,25 @@ test("import overview sends a chronological labelled scaffold and authoritative 
   assert.doesNotMatch(prompt, /earliest-source-id/);
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(JSON.parse(response.body).verification, {
-    totalCitations: 3,
-    passed: 3,
+  const result = JSON.parse(response.body);
+  assert.deepEqual(Object.keys(result), [
+    "portrait",
+    "portraitCitations",
+    "character",
+    "characterCitations",
+    "preoccupations",
+    "preoccupationsCitations",
+    "throughLine",
+    "throughLineCitations",
+    "forgottenIdeas",
+    "tender",
+    "tenderCitations",
+    "questions",
+    "verification"
+  ]);
+  assert.deepEqual(result.verification, {
+    totalCitations: 0,
+    passed: 0,
     failed: 0,
     failures: []
   });
@@ -84,34 +123,14 @@ test("import overview adds month counts when a year has enough notes", async (co
 
 test("import overview substitutes exact line locators, computes dates, and removes invalid evidence", async (context) => {
   const providerInput = baseOverviewInput({
-    opening: "In 2020 you were rushing. You wrote {{cite:0}} in a list. This remains.",
-    openingCitations: [{ noteId: "n1", startLine: 1, endLine: 2 }],
-    seasons: [
-      {
-        title: "One",
-        noteIds: ["n2", "n1"],
-        narrative: "You wrote {{cite:0}} early on.",
-        citations: [{ noteId: "n1", startLine: 1, endLine: 1 }]
-      },
-      {
-        title: "Two",
-        noteIds: ["n2"],
-        narrative: "You tracked {{cite:0}} carefully.",
-        citations: [{ noteId: "n2", startLine: 1, endLine: 1 }]
-      },
-      {
-        title: "Three",
-        noteIds: ["n99"],
-        narrative: "No quoted words here.",
-        citations: []
-      }
-    ],
-    language: "This bad source said {{cite:0}}. This remains.",
-    languageCitations: [{ noteId: "n99", startLine: 1, endLine: 1 }],
-    unchanged: "This bad range said {{cite:0}}. Another thought remains.",
-    unchangedCitations: [{ noteId: "n1", startLine: 8, endLine: 9 }],
-    patterns: "This empty source said {{cite:0}}. The pattern remains.",
-    patternsCitations: [{ noteId: "n1", startLine: 3, endLine: 3 }],
+    portrait: "In 2020 you were rushing. You wrote {{cite:0}} in a list. This remains.",
+    portraitCitations: [{ noteId: "n1", startLine: 1, endLine: 2 }],
+    character: "This bad source said {{cite:0}}. This remains.",
+    characterCitations: [{ noteId: "n99", startLine: 1, endLine: 1 }],
+    preoccupations: "This bad range said {{cite:0}}. Another thought remains.",
+    preoccupationsCitations: [{ noteId: "n1", startLine: 8, endLine: 9 }],
+    throughLine: "This empty source said {{cite:0}}. The pattern remains.",
+    throughLineCitations: [{ noteId: "n1", startLine: 3, endLine: 3 }],
     forgottenIdeas: [
       {
         title: "Cedar",
@@ -126,8 +145,9 @@ test("import overview substitutes exact line locators, computes dates, and remov
         citations: []
       }
     ],
-    tenderThread: "This malformed token said {{cite:9}}. You clearly redrafted this more than once. Care remains.",
-    tenderThreadCitations: []
+    tender: "This malformed token said {{cite:9}}. You clearly redrafted this more than once. Care remains.",
+    tenderCitations: [],
+    questions: ["In 2021, what changed?", "What do you still want to build?", "What keeps pulling you back?"]
   });
   const restore = installProviderMock(context, () => successfulProviderResponse(providerInput));
   const response = createResponse();
@@ -140,24 +160,20 @@ test("import overview substitutes exact line locators, computes dates, and remov
   assert.equal(restore.requests.length, 1);
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.equal(result.opening, "You wrote “exact phrase\r\nsecond exact line” in a list. This remains.");
-  assert.deepEqual(result.openingCitations, [{ noteId: "n1", startLine: 1, endLine: 2 }]);
-  assert.equal(result.language, "");
-  assert.deepEqual(result.languageCitations, []);
-  assert.equal(result.unchanged, "Another thought remains.");
-  assert.equal(result.patterns, "This empty source said “second exact line”. The pattern remains.");
-  assert.deepEqual(result.patternsCitations, [{ noteId: "n1", startLine: 2, endLine: 2 }]);
-  assert.equal(result.tenderThread, "Care remains.");
-  assert.equal(result.seasons[0].period, "Jan 2024 – Mar 2025");
-  assert.equal(result.seasons[1].period, "Mar 2025");
-  assert.equal(result.seasons[2].period, "");
-  assert.equal(result.seasons[0].narrative, "You wrote “exact phrase” early on.");
-  assert.equal(result.seasons[1].narrative, "You tracked “Project Cedar” carefully.");
+  assert.equal(result.portrait, "You wrote “exact phrase\r\nsecond exact line” in a list. This remains.");
+  assert.deepEqual(result.portraitCitations, [{ noteId: "n1", startLine: 1, endLine: 2 }]);
+  assert.equal(result.character, "");
+  assert.deepEqual(result.characterCitations, []);
+  assert.equal(result.preoccupations, "Another thought remains.");
+  assert.equal(result.throughLine, "This empty source said “second exact line”. The pattern remains.");
+  assert.deepEqual(result.throughLineCitations, [{ noteId: "n1", startLine: 2, endLine: 2 }]);
+  assert.equal(result.tender, "Care remains.");
   assert.equal(result.forgottenIdeas[0].whenWritten, "Mar 2025");
   assert.equal(result.forgottenIdeas[1].whenWritten, "");
+  assert.deepEqual(result.questions, ["", "What do you still want to build?", "What keeps pulling you back?"]);
   assert.deepEqual(result.verification, {
-    totalCitations: 15,
-    passed: 9,
+    totalCitations: 10,
+    passed: 4,
     failed: 6,
     failures: [
       { noteId: "", startLine: null, endLine: null, reason: "date_in_prose" },
@@ -165,19 +181,19 @@ test("import overview substitutes exact line locators, computes dates, and remov
       { noteId: "n1", startLine: 8, endLine: 9, citationIndex: 0, citationsAvailable: 1, reason: "invalid_locator" },
       { noteId: null, startLine: null, endLine: null, citationIndex: 9, citationsAvailable: 0, reason: "invalid_locator" },
       { noteId: "n99", startLine: null, endLine: null, reason: "note_not_found" },
-      { noteId: "n99", startLine: null, endLine: null, reason: "note_not_found" }
+      { noteId: "", startLine: null, endLine: null, reason: "date_in_prose" }
     ]
   });
   assert.deepEqual(restore.loggedErrors, [
-    ["Import overview verification totalCitations=15 passed=9 failed=6"]
+    ["Import overview verification totalCitations=10 passed=4 failed=6"]
   ]);
 });
 
 test("import overview trims a long cited span at its first sentence", async (context) => {
   const longLine = `A short exact sentence. ${"additional source words ".repeat(20)}`;
   const providerInput = baseOverviewInput({
-    opening: "You wrote {{cite:0}}",
-    openingCitations: [{ noteId: "n1", startLine: 1, endLine: 1 }]
+    portrait: "You wrote {{cite:0}}",
+    portraitCitations: [{ noteId: "n1", startLine: 1, endLine: 1 }]
   });
   installProviderMock(context, () => successfulProviderResponse(providerInput));
   const response = createResponse();
@@ -186,14 +202,14 @@ test("import overview trims a long cited span at its first sentence", async (con
 
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.equal(result.opening, "You wrote “A short exact sentence”.");
-  assert.equal(result.opening.includes("additional source words"), false);
+  assert.equal(result.portrait, "You wrote “A short exact sentence”.");
+  assert.equal(result.portrait.includes("additional source words"), false);
 });
 
 test("import overview wraps extracted text with one balanced quote pair and cleans trailing punctuation", async (context) => {
   const providerInput = baseOverviewInput({
-    opening: "A revealing line was {{cite:0}} in a task list. You repeated {{cite:1}}.",
-    openingCitations: [
+    portrait: "A revealing line was {{cite:0}} in a task list. You repeated {{cite:1}}.",
+    portraitCitations: [
       { noteId: "n1", startLine: 1, endLine: 1 },
       { noteId: "n1", startLine: 2, endLine: 2 }
     ]
@@ -202,15 +218,15 @@ test("import overview wraps extracted text with one balanced quote pair and clea
   const response = createResponse();
 
   await handler(createRequest([
-    note("one", "One", '"call psych\'s asap. )\n“Keep going!””', "2026-08-25T00:00:00.000Z")
+    note("one", "One", '"call the builder asap. )\n“Keep going!””', "2026-08-25T00:00:00.000Z")
   ]), response);
 
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.equal(result.opening, "A revealing line was “call psych's asap” in a task list. You repeated “Keep going”.");
-  assert.equal((result.opening.match(/“/gu) || []).length, 2);
-  assert.equal((result.opening.match(/”/gu) || []).length, 2);
-  assert.doesNotMatch(result.opening, /["„‟″«»]/u);
+  assert.equal(result.portrait, "A revealing line was “call the builder asap” in a task list. You repeated “Keep going”.");
+  assert.equal((result.portrait.match(/“/gu) || []).length, 2);
+  assert.equal((result.portrait.match(/”/gu) || []).length, 2);
+  assert.doesNotMatch(result.portrait, /["„‟″«»]/u);
 });
 
 test("import overview makes exactly one provider attempt on failure", async (context) => {
@@ -280,11 +296,11 @@ test("import overview tolerates missing metadata, wrong optional types, and unex
       type: "tool_use",
       name: "submit_import_overview",
       input: {
-        opening: "Partial output",
-        seasons: [{ title: "A usable season", narrative: "A usable narrative", unexpected: true }],
-        language: 42,
-        patterns: { unexpected: true },
+        portrait: "Partial output",
+        character: 42,
+        preoccupations: { unexpected: true },
         forgottenIdeas: [{ title: "An idea", why: "It may matter", unexpected: true }],
+        questions: ["One?", 42, "Two?", "Three?", "Four?"],
         unexpectedTopLevel: true
       }
     }],
@@ -297,18 +313,13 @@ test("import overview tolerates missing metadata, wrong optional types, and unex
 
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.equal(result.opening, "Partial output");
-  assert.deepEqual(result.openingCitations, []);
-  assert.deepEqual(result.seasons, [{
-    title: "A usable season",
-    period: "",
-    narrative: "A usable narrative",
-    citations: []
-  }]);
-  assert.equal(result.language, "");
-  assert.equal(result.unchanged, "");
-  assert.equal(result.patterns, "");
-  assert.equal(result.tenderThread, "");
+  assert.equal(result.portrait, "Partial output");
+  assert.deepEqual(result.portraitCitations, []);
+  assert.equal(result.character, "");
+  assert.equal(result.preoccupations, "");
+  assert.equal(result.throughLine, "");
+  assert.equal(result.tender, "");
+  assert.deepEqual(result.questions, ["One?", "Two?", "Three?"]);
   assert.deepEqual(result.forgottenIdeas, [{
     title: "An idea",
     whenWritten: "",
@@ -329,7 +340,6 @@ test("import overview reports failed fields and key shapes for an unusable tool 
       type: "tool_use",
       name: "submit_import_overview",
       input: {
-        seasons: "not-an-array",
         forgottenIdeas: [{ title: "An idea", unexpected: true }],
         unexpectedTopLevel: true
       }
@@ -346,11 +356,9 @@ test("import overview reports failed fields and key shapes for an unusable tool 
     type: "tool_input_validation_error",
     message: "Provider tool input failed overview validation",
     failed_fields: [
-      { field: "opening", reason: "missing", expected: "non-empty string" },
-      { field: "seasons", reason: "wrong_type", expected: "array", actual: "string" }
+      { field: "portrait", reason: "missing", expected: "non-empty string" }
     ],
-    top_level_keys: ["seasons", "forgottenIdeas", "unexpectedTopLevel"],
-    first_season_keys: [],
+    top_level_keys: ["forgottenIdeas", "unexpectedTopLevel"],
     first_forgotten_idea_keys: ["title", "unexpected"],
     stop_reason: "tool_use",
     usage: { input_tokens: 100, output_tokens: 200 }
@@ -362,7 +370,7 @@ test("import overview distinguishes empty core fields as failed constraints", as
     content: [{
       type: "tool_use",
       name: "submit_import_overview",
-      input: { opening: "", seasons: [], forgottenIdeas: [] }
+      input: { portrait: "", forgottenIdeas: [] }
     }],
     stopReason: "tool_use",
     usage: { input_tokens: 100, output_tokens: 200 }
@@ -373,8 +381,7 @@ test("import overview distinguishes empty core fields as failed constraints", as
 
   assert.equal(response.statusCode, 502);
   assert.deepEqual(JSON.parse(response.body).error.detail.failed_fields, [
-    { field: "opening", reason: "failed_constraint", constraint: "must not be empty" },
-    { field: "seasons", reason: "failed_constraint", constraint: "must contain at least one object" }
+    { field: "portrait", reason: "failed_constraint", constraint: "must not be empty" }
   ]);
 });
 
@@ -394,7 +401,6 @@ test("import overview handles malformed partial content without entering verific
     message: "Provider response did not contain the required overview tool output",
     failed_fields: [{ field: "$", reason: "wrong_type", expected: "object", actual: "undefined" }],
     top_level_keys: [],
-    first_season_keys: [],
     first_forgotten_idea_keys: [],
     stop_reason: "end_turn",
     usage: { input_tokens: 100, output_tokens: 50 }
@@ -447,22 +453,18 @@ test("import overview rejects invalid createdAt values before calling the provid
 
 function baseOverviewInput(overrides = {}) {
   return {
-    opening: "Opening",
-    openingCitations: [],
-    seasons: [
-      { title: "One", noteIds: ["n1"], narrative: "First", citations: [] },
-      { title: "Two", noteIds: ["n1"], narrative: "Second", citations: [] },
-      { title: "Three", noteIds: ["n1"], narrative: "Third", citations: [] }
-    ],
-    language: "Language",
-    languageCitations: [],
-    unchanged: "Unchanged",
-    unchangedCitations: [],
-    patterns: "Patterns",
-    patternsCitations: [],
+    portrait: "Portrait",
+    portraitCitations: [],
+    character: "Character",
+    characterCitations: [],
+    preoccupations: "Preoccupations",
+    preoccupationsCitations: [],
+    throughLine: "Through line",
+    throughLineCitations: [],
     forgottenIdeas: [],
-    tenderThread: "Tender thread",
-    tenderThreadCitations: [],
+    tender: "Tender",
+    tenderCitations: [],
+    questions: ["What do you want?", "What keeps returning?", "What changed you?"],
     ...overrides
   };
 }

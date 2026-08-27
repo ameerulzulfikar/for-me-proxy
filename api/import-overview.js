@@ -7,16 +7,16 @@ const MAX_OUTPUT_TOKENS = 32_000;
 const PROVIDER_TIMEOUT_MS = 270_000;
 
 const systemPrompt = `
-You are reading someone's complete personal note archive across many years: every word they have supplied. Do not summarize it. Read it as an unusually perceptive friend would, attending to who this person is, how they have changed, and what has quietly endured. Write every section in the second person, with warmth, specificity, and restraint. Never sound therapeutic or clinical, and never say "you should". Prefer a few deeply seen observations to broad coverage. Always return the result through the provided tool.
+You are reading someone's complete personal note archive across many years: every word they have supplied. Do not summarize it. Describe who this person is, what keeps occupying them, and what has quietly endured. Write every section in the second person. Always return the result through the provided tool.
 
 WRITING RULES — PROMINENT AND OVERRIDING
 These rules override any instinct toward literary style.
 
-VOICE: Write plainly and directly, like a perceptive friend talking, not like an essayist. No metaphors about the archive itself (no "field notes of...", no "reads like..."). No elegant summarising phrases that sound wise but say little. Short sentences are fine. If a sentence sounds impressive but could describe many people, delete it.
+VOICE — APPLIES EVERYWHERE: Write like a perceptive friend describing someone they have come to know. Be warm, plain, and direct. Use short declarative sentences. Contractions are fine. Use second person throughout. Do not write in a literary style. Do not use metaphors about the archive. Do not add dramatic flourishes or rhetorical questions. Never sound therapeutic or clinical, and never say "you should". If a sentence sounds like it was written to impress, cut it.
 
 EVIDENCE: Every substantial claim must be anchored — a quote-by-reference locator or a concrete artifact (a named project, a tracked number, a recurring object or list). Claims without anchors are not worth making. One anchored observation beats three graceful generalisations. Structured source IDs anchor chronology; never use a written date as prose evidence.
 
-UNCERTAINTY IS PERMITTED AND VALUED: Where a reading is genuinely uncertain, say so in plain words ("this is one way to read it", "you'd know better than these notes do"). Where two readings both fit the evidence, name both. This honesty is more convincing than confidence.
+UNCERTAINTY: Do not hedge in portrait. Put only well-supported claims there and state them directly. In later sections, where a reading is genuinely uncertain, say so in plain words ("I might be reading too much into this", "you'd know better than I would"). Where two readings both fit the evidence, name both.
 
 INSIGHT REQUIREMENT: At least two observations across the whole response must be things the person likely has NOT articulated about themselves — a pattern only visible across years, a contradiction between two areas of their notes, or a continuity they wouldn't have named. Offer these as observations, never as verdicts, and always with their evidence attached. Do not moralise or advise.
 
@@ -24,40 +24,46 @@ DEPTH OVER COVERAGE: Your job is depth, not coverage. It is better to say three 
 
 Do not add personality typing, psychological frameworks, or diagnostic language of any kind.
 
+HARD PRIVACY RULE — APPLIES TO THE ENTIRE RESPONSE
+Never name or reference health conditions, diagnoses, medical treatments, therapy or psychology appointments, deceased people by name or relationship detail, or romantic partners by name. This rule applies to every field, including portrait, forgotten-idea titles and explanations, tender, and questions. It also applies to quotes. Before choosing a locator, screen the entire cited line or line range. Never cite a line containing any of those specifics. Gesture without exposing private detail. No other instruction overrides this rule.
+
 SOURCE LOCATORS AND SERVER-COMPUTED DATES — ABSOLUTE
 The user message begins with a server-computed timeline index, followed by notes labelled n1, n2, and so on in chronological order. Every line of note text is prefixed with its note ID and line number, such as "n412|L7|".
 1. NEVER WRITE QUOTE TEXT YOURSELF. To quote the person, insert a token such as {{cite:0}} at the exact position where the quote belongs in the prose. Then put { noteId, startLine, endLine } at index 0 of that section's citations array. The server, not you, will extract and insert the exact words from those lines.
 2. Treat each citation token as a quoted phrase so the surrounding prose is grammatical after substitution. Example: You wrote {{cite:0}} in the middle of a grocery list. Choose quotes for emotional or revealing weight, not as decoration. Prefer a short striking line over a bland factual one. The sentence around a quote must say what the line reveals; do not merely introduce it.
 3. Citation indexes start at 0 and refer only to the citations array beside that section. Use an inclusive line range. Never put quote text in a citation object or anywhere else in your response.
-4. For opening, language, unchanged, patterns, and tenderThread, use the correspondingly named top-level citations array. Each season and forgotten idea has its own citations array. Every {{cite:N}} token must have a locator at index N in that section's citations array; a token without its matching locator is invalid. Include only locators used by tokens in that section. If there are no tokens, return an empty citations array.
+4. For portrait, character, preoccupations, throughLine, and tender, use the correspondingly named top-level citations array. Each forgotten idea has its own citations array. Questions have no citations and must not contain citation tokens. Every {{cite:N}} token must have a locator at index N in that section's citations array; a token without its matching locator is invalid. Include only locators used by tokens in that section. If there are no tokens, return an empty citations array.
 5. NEVER WRITE A YEAR, MONTH, CALENDAR DATE, DATE RANGE, OR BARE AGE IN PROSE. Do not write phrases such as "at 19"; describe the life stage instead. Use relative language that cannot be mistaken for a date: "early on", "years later", "in the last stretch", "at the start of the real estate years", or "shortly after". For example, write "early in your working life" instead of an age, and "years later, the project returned" instead of naming a year. Do not produce period or whenWritten fields. The server computes every displayed date from real createdAt metadata.
-6. For each season, provide noteIds containing the earliest and latest notes in that chapter, plus any other notes you drew on. For each forgotten idea, provide the single sourceNoteId where the idea appears. These source IDs are for server-side date computation, not prose.
+6. For each forgotten idea, provide the single sourceNoteId where the idea appears. This source ID is for server-side date computation, not prose.
 
-OPENING
-Write 2-4 sentences that interpret the person rather than inventorying the archive. Use at most two named specifics. It should feel like the opening of a letter from someone who knows them, never a table of contents.
+PORTRAIT — THE HEADLINE
+Write 6-10 sentences answering "who is this person?" plainly and confidently, as you would describe a friend to someone who has not met them. Include the concrete, ordinary facts that place them in the world when the notes establish them: where they live and work, what they do for a living, their family situation, and what they build. State these facts flatly and without commentary. Respect the hard privacy rule while doing so. Then make a few direct character claims that the evidence supports. End with exactly one sentence naming the central tension of their life as these notes show it: what they are chasing and what it seems to cost or compete with. Make that closing sentence the single most quotable line in the response. Do not hedge anywhere in portrait.
 
-SEASONS
-Identify emotional and identity chapters that genuinely emerge from the writing rather than dividing time into arbitrary calendar buckets. Aim for 4-6 seasons total, not more. HARD REQUIREMENT: every individual season narrative must contain at least five complete sentences and no more than nine. A season narrative under five sentences is invalid output. Count the sentences in every season before submitting. If a period genuinely lacks enough material for five sentences, merge it into an adjacent season rather than producing a thin one. Give each season a title, noteIds containing the earliest and latest notes belonging to that chapter plus any others you drew on, and a full narrative paragraph. Describe who they were, what they were reaching toward, and the register of their writing in that season. Only when the notes provide evidence, describe what appears to have prompted the transition into the next season; otherwise leave the cause unstated. Every season must include at least one citation token pointing to an exact note line and at least one concrete non-quoted specific, such as a named project, a tracked number, or a recurring artifact.
+CHARACTER — THE DEEPER READ
+Write 8-12 sentences. Every high-level claim must immediately descend into the concrete behaviour, quoted line, repeated artifact, named project, tracked number, object, or list that produced the claim. Abstraction alone is worthless. The point is the claim plus its dissection. Include at least one observation the person probably has not articulated about themselves. You may hedge here when the evidence genuinely leaves room for another reading.
 
-LANGUAGE
-Write one substantial paragraph of 6-10 sentences about what the writing style itself reveals beyond subject matter. Notice movements between terse and expansive writing, stretches dominated by lists or by feeling, runs of motivational self-talk and what came before them, and meaningful gaps when writing stopped. Surface patterns the person is unlikely to have recognized alone.
+PREOCCUPATIONS
+Write 5-8 sentences about what they cannot stop returning to. Identify the underlying concerns, not merely the subjects they mention. Explain why those concerns keep returning, with evidence. Do not turn this into a list of topics.
 
-UNCHANGED
-Write one substantial paragraph of 6-10 sentences on 2-3 important threads that may look abandoned but continue in a changed form: early passions wearing new clothes. Support each connection with evidence from both eras, ideally placing an old phrase beside a recent artifact. Trace transformation rather than disappearance, and derive every connection only from this archive.
-
-PATTERNS
-Write one substantial paragraph of 6-10 sentences about identity-level behavioral fingerprints, not recurring topics. Attend to how setbacks are processed, how ambition appears on the page compared with feeling, cycles of returning to abandoned things, and what courage looks like in these notes.
+THROUGHLINE
+Write 5-8 sentences about what stayed constant while the surface changed. Support the throughline with evidence from both early and recent material. Trace transformation rather than disappearance. Derive every connection only from this archive.
 
 FORGOTTEN IDEAS
-Return 3-5 specific ideas that are genuinely forgotten or easily overlooked, with the sourceNoteId where each idea appears and a concise explanation of why each is worth revisiting. Do not write a date; the server will add whenWritten from that note's metadata.
+Return 4-5 specific ideas that are genuinely forgotten or easily overlooked, with the sourceNoteId where each idea appears and a concise explanation of why each is worth revisiting. Do not write a date; the server will add whenWritten from that note's metadata.
 
-TENDER THREAD
-Write one substantial paragraph of 6-10 sentences that plainly recognizes emotional depth—grief, love, strain, faith—when it is present, and acknowledges that it matters. Exercise deliberate discretion across this entire first-impression output: never name deceased people, romantic partners, health conditions, or diagnoses. Gesture carefully, as in "there is grief here you have redrafted across years," without identifying who or what it concerns. Earn trust by combining real perception with privacy; deeper detail can wait for a later private setting.
+TENDER
+Write 4-6 sentences and no more. Acknowledge emotional depth with care when it is present. Recognize that it matters without exposing private specifics. Keep this restrained.
+
+QUESTIONS
+Return exactly three questions with no citations. Ask what you would genuinely want to ask this person and what only their own archive could answer. Write each in second person. Keep each short and curious. They must be genuine questions, never rhetorical ones.
+
+LENGTH
+Leave the reader wanting more, not feeling finished. Cut anything that merely restates another section.
 
 INTEGRITY RULES — ABSOLUTE
-1. Every date you write, including every whenWritten value and season period, must be copied from or derived strictly from the notes' createdAt fields. Never infer a date from note content or estimate one from memory. When precision is uncertain, use only the createdAt year.
+1. Every date in the response, including every whenWritten value, must be copied from or derived strictly from the notes' createdAt fields. Never infer a date from note content or estimate one from memory. When precision is uncertain, use only the createdAt year. The server alone adds these dates.
 2. Never state or imply a count greater than the number of notes actually supplied.
-3. You may observe correlation, but never declare causation without evidence. Mark interpretation explicitly with language such as "one way to see this...", or return the question with "you would know why". Where the notes do not establish a cause, say less.
+3. You may observe correlation, but never declare causation without evidence. Outside portrait, mark uncertain interpretation explicitly in plain language. Where the notes do not establish a cause, say less. In portrait, include only claims supported strongly enough to state directly.
 4. Never fabricate or alter a quote. Verbatim means exact text from the notes.
 5. For thin or sparse archives, write shorter, honest sections rather than inventing depth.
 `.trim();
@@ -85,40 +91,17 @@ const overviewTool = {
     type: "object",
     additionalProperties: false,
     properties: {
-      opening: { type: "string" },
-      openingCitations: citationsSchema,
-      seasons: {
-        type: "array",
-        minItems: 3,
-        maxItems: 6,
-        items: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            title: { type: "string" },
-            noteIds: {
-              type: "array",
-              minItems: 1,
-              items: { type: "string" }
-            },
-            narrative: {
-              type: "string",
-              description: "HARD REQUIREMENT: a complete narrative paragraph of 5-9 sentences. Fewer than five sentences is invalid output."
-            },
-            citations: { ...citationsSchema, minItems: 1 }
-          },
-          required: ["title", "noteIds", "narrative", "citations"]
-        }
-      },
-      language: { type: "string" },
-      languageCitations: citationsSchema,
-      unchanged: { type: "string" },
-      unchangedCitations: citationsSchema,
-      patterns: { type: "string" },
-      patternsCitations: citationsSchema,
+      portrait: { type: "string" },
+      portraitCitations: citationsSchema,
+      character: { type: "string" },
+      characterCitations: citationsSchema,
+      preoccupations: { type: "string" },
+      preoccupationsCitations: citationsSchema,
+      throughLine: { type: "string" },
+      throughLineCitations: citationsSchema,
       forgottenIdeas: {
         type: "array",
-        minItems: 3,
+        minItems: 4,
         maxItems: 5,
         items: {
           type: "object",
@@ -132,10 +115,16 @@ const overviewTool = {
           required: ["title", "sourceNoteId", "why", "citations"]
         }
       },
-      tenderThread: { type: "string" },
-      tenderThreadCitations: citationsSchema
+      tender: { type: "string" },
+      tenderCitations: citationsSchema,
+      questions: {
+        type: "array",
+        minItems: 3,
+        maxItems: 3,
+        items: { type: "string" }
+      }
     },
-    required: ["opening", "openingCitations", "seasons", "language", "languageCitations", "unchanged", "unchangedCitations", "patterns", "patternsCitations", "forgottenIdeas", "tenderThread", "tenderThreadCitations"]
+    required: ["portrait", "portraitCitations", "character", "characterCitations", "preoccupations", "preoccupationsCitations", "throughLine", "throughLineCitations", "forgottenIdeas", "tender", "tenderCitations", "questions"]
   }
 };
 
@@ -260,7 +249,6 @@ export default async function handler(request, response) {
         message: toolUse ? "Provider tool input failed overview validation" : "Provider response did not contain the required overview tool output",
         failed_fields: validation.diagnostics.failedFields,
         top_level_keys: validation.diagnostics.topLevelKeys,
-        first_season_keys: validation.diagnostics.firstSeasonKeys,
         first_forgotten_idea_keys: validation.diagnostics.firstForgottenIdeaKeys,
         ...providerDiagnostics
       });
@@ -478,9 +466,8 @@ function validateOverview(value) {
     };
   }
 
-  const opening = normalizeString(value.opening);
-  const seasons = normalizeSeasons(value.seasons);
-  if (!opening.trim() && seasons.length === 0) {
+  const portrait = normalizeString(value.portrait);
+  if (!portrait.trim()) {
     return {
       overview: null,
       diagnostics: {
@@ -492,34 +479,21 @@ function validateOverview(value) {
 
   return {
     overview: {
-      opening,
-      openingCitations: normalizeCitations(value.openingCitations),
-      seasons,
-      language: normalizeString(value.language),
-      languageCitations: normalizeCitations(value.languageCitations),
-      unchanged: normalizeString(value.unchanged),
-      unchangedCitations: normalizeCitations(value.unchangedCitations),
-      patterns: normalizeString(value.patterns),
-      patternsCitations: normalizeCitations(value.patternsCitations),
+      portrait,
+      portraitCitations: normalizeCitations(value.portraitCitations),
+      character: normalizeString(value.character),
+      characterCitations: normalizeCitations(value.characterCitations),
+      preoccupations: normalizeString(value.preoccupations),
+      preoccupationsCitations: normalizeCitations(value.preoccupationsCitations),
+      throughLine: normalizeString(value.throughLine),
+      throughLineCitations: normalizeCitations(value.throughLineCitations),
       forgottenIdeas: normalizeForgottenIdeas(value.forgottenIdeas),
-      tenderThread: normalizeString(value.tenderThread),
-      tenderThreadCitations: normalizeCitations(value.tenderThreadCitations)
+      tender: normalizeString(value.tender),
+      tenderCitations: normalizeCitations(value.tenderCitations),
+      questions: normalizeQuestions(value.questions)
     },
     diagnostics: { ...shape, failedFields: [] }
   };
-}
-
-function normalizeSeasons(value) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter(isPlainObject).map((season) => ({
-    title: normalizeString(season.title),
-    noteIds: normalizeNoteIds(season.noteIds),
-    narrative: normalizeString(season.narrative),
-    citations: normalizeCitations(season.citations)
-  }));
 }
 
 function normalizeForgottenIdeas(value) {
@@ -535,13 +509,11 @@ function normalizeForgottenIdeas(value) {
   }));
 }
 
-function normalizeNoteIds(value) {
+function normalizeQuestions(value) {
   if (!Array.isArray(value)) {
     return [];
   }
-  return value
-    .filter((noteId) => typeof noteId === "string" && noteId.trim())
-    .map((noteId) => noteId.trim());
+  return value.filter((question) => typeof question === "string").slice(0, 3);
 }
 
 function normalizeCitations(value) {
@@ -572,11 +544,9 @@ function normalizeLineNumber(value) {
 
 function describeOverviewShape(value) {
   const topLevelKeys = isPlainObject(value) ? Object.keys(value) : [];
-  const firstSeason = isPlainObject(value) && Array.isArray(value.seasons) ? value.seasons[0] : null;
   const firstForgottenIdea = isPlainObject(value) && Array.isArray(value.forgottenIdeas) ? value.forgottenIdeas[0] : null;
   return {
     topLevelKeys,
-    firstSeasonKeys: isPlainObject(firstSeason) ? Object.keys(firstSeason) : [],
     firstForgottenIdeaKeys: isPlainObject(firstForgottenIdea) ? Object.keys(firstForgottenIdea) : []
   };
 }
@@ -584,27 +554,12 @@ function describeOverviewShape(value) {
 function describeUnusableOverviewFields(value) {
   const failedFields = [];
 
-  if (!Object.hasOwn(value, "opening")) {
-    failedFields.push({ field: "opening", reason: "missing", expected: "non-empty string" });
-  } else if (typeof value.opening !== "string") {
-    failedFields.push({ field: "opening", reason: "wrong_type", expected: "string", actual: describeValueType(value.opening) });
-  } else if (!value.opening.trim()) {
-    failedFields.push({ field: "opening", reason: "failed_constraint", constraint: "must not be empty" });
-  }
-
-  if (!Object.hasOwn(value, "seasons")) {
-    failedFields.push({ field: "seasons", reason: "missing", expected: "array with at least one object" });
-  } else if (!Array.isArray(value.seasons)) {
-    failedFields.push({ field: "seasons", reason: "wrong_type", expected: "array", actual: describeValueType(value.seasons) });
-  } else {
-    value.seasons.forEach((season, index) => {
-      if (!isPlainObject(season)) {
-        failedFields.push({ field: `seasons[${index}]`, reason: "wrong_type", expected: "object", actual: describeValueType(season) });
-      }
-    });
-    if (!value.seasons.some(isPlainObject)) {
-      failedFields.push({ field: "seasons", reason: "failed_constraint", constraint: "must contain at least one object" });
-    }
+  if (!Object.hasOwn(value, "portrait")) {
+    failedFields.push({ field: "portrait", reason: "missing", expected: "non-empty string" });
+  } else if (typeof value.portrait !== "string") {
+    failedFields.push({ field: "portrait", reason: "wrong_type", expected: "string", actual: describeValueType(value.portrait) });
+  } else if (!value.portrait.trim()) {
+    failedFields.push({ field: "portrait", reason: "failed_constraint", constraint: "must not be empty" });
   }
 
   return failedFields;
@@ -629,21 +584,11 @@ function verifyOverview(overview, notes) {
     failures: []
   };
 
-  const opening = verifyProse(overview.opening, overview.openingCitations, notesById, verification);
-  const language = verifyProse(overview.language, overview.languageCitations, notesById, verification);
-  const unchanged = verifyProse(overview.unchanged, overview.unchangedCitations, notesById, verification);
-  const patterns = verifyProse(overview.patterns, overview.patternsCitations, notesById, verification);
-  const tenderThread = verifyProse(overview.tenderThread, overview.tenderThreadCitations, notesById, verification);
-
-  const seasons = overview.seasons.map((season) => {
-    const narrative = verifyProse(season.narrative, season.citations, notesById, verification);
-    return {
-      title: season.title,
-      period: computeSeasonPeriod(season.noteIds, notesById, verification),
-      narrative: narrative.text,
-      citations: narrative.citations
-    };
-  });
+  const portrait = verifyProse(overview.portrait, overview.portraitCitations, notesById, verification);
+  const character = verifyProse(overview.character, overview.characterCitations, notesById, verification);
+  const preoccupations = verifyProse(overview.preoccupations, overview.preoccupationsCitations, notesById, verification);
+  const throughLine = verifyProse(overview.throughLine, overview.throughLineCitations, notesById, verification);
+  const tender = verifyProse(overview.tender, overview.tenderCitations, notesById, verification);
 
   const forgottenIdeas = overview.forgottenIdeas.map((idea) => {
     const why = verifyProse(idea.why, idea.citations, notesById, verification);
@@ -654,22 +599,23 @@ function verifyOverview(overview, notes) {
       citations: why.citations
     };
   });
+  const questions = overview.questions.map((question) => verifyProse(question, [], notesById, verification).text);
 
   console.error(`Import overview verification totalCitations=${verification.totalCitations} passed=${verification.passed} failed=${verification.failed}`);
 
   return {
-    opening: opening.text,
-    openingCitations: opening.citations,
-    seasons,
-    language: language.text,
-    languageCitations: language.citations,
-    unchanged: unchanged.text,
-    unchangedCitations: unchanged.citations,
-    patterns: patterns.text,
-    patternsCitations: patterns.citations,
+    portrait: portrait.text,
+    portraitCitations: portrait.citations,
+    character: character.text,
+    characterCitations: character.citations,
+    preoccupations: preoccupations.text,
+    preoccupationsCitations: preoccupations.citations,
+    throughLine: throughLine.text,
+    throughLineCitations: throughLine.citations,
     forgottenIdeas,
-    tenderThread: tenderThread.text,
-    tenderThreadCitations: tenderThread.citations,
+    tender: tender.text,
+    tenderCitations: tender.citations,
+    questions,
     verification
   };
 }
@@ -898,15 +844,6 @@ function removeUnmatchedTrailingClosers(value) {
   }
 }
 
-function computeSeasonPeriod(noteIds, notesById, verification) {
-  const notes = verifyNoteReferences(noteIds, notesById, verification)
-    .sort((a, b) => a.timestamp - b.timestamp);
-  if (notes.length === 0) {
-    return "";
-  }
-  return formatShortDateRange(notes[0].timestamp, notes[notes.length - 1].timestamp);
-}
-
 function computeNoteDate(noteId, notesById, verification) {
   const [note] = verifyNoteReferences([noteId], notesById, verification);
   return note ? formatShortDateLabel(note.timestamp) : "";
@@ -943,12 +880,6 @@ function formatShortDateLabel(timestamp) {
   const date = new Date(timestamp);
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${monthNames[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
-}
-
-function formatShortDateRange(firstTimestamp, lastTimestamp) {
-  const first = formatShortDateLabel(firstTimestamp);
-  const last = formatShortDateLabel(lastTimestamp);
-  return first === last ? first : `${first} – ${last}`;
 }
 
 function recordVerificationFailure(verification, failure) {
