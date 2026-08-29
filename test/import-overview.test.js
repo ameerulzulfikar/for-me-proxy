@@ -104,6 +104,7 @@ Thin archives get shorter honest answers, never invented depth.`);
   assert.ok(prompt.indexOf('[NOTE n1 | DATE: January 2024 | TITLE: "Earliest"]') < prompt.indexOf('[NOTE n2 | DATE: March 2025 | TITLE: "Middle"]\nn2|L1| Middle full text'));
   assert.ok(prompt.indexOf('[NOTE n2 | DATE: March 2025 | TITLE: "Middle"]') < prompt.indexOf('[NOTE n3 | DATE: May 2025 | TITLE: "Later"]\nn3|L1| Latest full text'));
   assert.doesNotMatch(prompt, /earliest-source-id/);
+  assert.doesNotMatch(prompt, /DATE OF BIRTH/u);
   assert.doesNotMatch(prompt, /\{\{cite|startLine|endLine|Do not write dates/u);
 
   assert.equal(response.statusCode, 200);
@@ -125,6 +126,23 @@ Thin archives get shorter honest answers, never invented depth.`);
     failed: 0,
     failures: []
   });
+});
+
+test("import overview adds an optional birthdate to the authoritative timeline", async (context) => {
+  const restore = installProviderMock(context, () => successfulProviderResponse(baseOverviewInput()));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Text", "2026-08-25T00:00:00.000Z")
+  ], { birthdate: "1990-04-12" }), response);
+
+  assert.equal(response.statusCode, 200);
+  const upstreamBody = JSON.parse(restore.requests[0].options.body);
+  const prompt = upstreamBody.messages[0].content[0].text;
+  const birthdateLine = "PERSON'S DATE OF BIRTH: 1990-04-12. Ages at any note can therefore be computed exactly from that note's server-provided date.";
+  assert.equal(prompt.split("\n").filter((line) => line === birthdateLine).length, 1);
+  assert.ok(prompt.indexOf(birthdateLine) < prompt.indexOf("| Scope | Date or range | Note count |"));
+  assert.ok(prompt.indexOf(birthdateLine) < prompt.indexOf("NOTES — CHRONOLOGICAL, FULL TEXT"));
 });
 
 test("import overview adds month counts when a year has enough notes", async (context) => {
@@ -822,6 +840,19 @@ test("import overview rejects invalid createdAt values before calling the provid
   assert.deepEqual(JSON.parse(response.body), { error: { message: "Invalid notes array" } });
 });
 
+test("import overview rejects an invalid optional birthdate before calling the provider", async (context) => {
+  const restore = installProviderMock(context, () => successfulProviderResponse(baseOverviewInput()));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Text", "2026-08-25T00:00:00.000Z")
+  ], { birthdate: "1990-02-30" }), response);
+
+  assert.equal(restore.requests.length, 0);
+  assert.equal(response.statusCode, 400);
+  assert.deepEqual(JSON.parse(response.body), { error: { message: "Invalid birthdate" } });
+});
+
 function baseOverviewInput(overrides = {}) {
   return {
     portrait: "Portrait",
@@ -881,8 +912,8 @@ function installProviderMock(context, fetchImplementation) {
   return { requests, loggedErrors };
 }
 
-function createRequest(notes) {
-  return { method: "POST", body: { notes } };
+function createRequest(notes, fields = {}) {
+  return { method: "POST", body: { notes, ...fields } };
 }
 
 function note(id, title, text, createdAt) {

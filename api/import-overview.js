@@ -232,6 +232,11 @@ export default async function handler(request, response) {
     return sendJson(response, 400, { error: { message: "Missing notes array" } });
   }
 
+  const birthdate = body.birthdate === undefined ? null : normalizeIsoDate(body.birthdate);
+  if (body.birthdate !== undefined && !birthdate) {
+    return sendJson(response, 400, { error: { message: "Invalid birthdate" } });
+  }
+
   if (body.notes.length > MAX_NOTES) {
     return sendJson(response, 413, { error: { message: "Too many notes" } });
   }
@@ -271,7 +276,7 @@ export default async function handler(request, response) {
             content: [
               {
                 type: "text",
-                text: buildOverviewPrompt(scaffoldedNotes)
+                text: buildOverviewPrompt(scaffoldedNotes, birthdate)
               }
             ]
           }
@@ -406,7 +411,7 @@ function scaffoldNotes(notes) {
     });
 }
 
-function buildOverviewPrompt(notes) {
+function buildOverviewPrompt(notes, birthdate) {
   const noteBlocks = notes.map((note) => [
     `[NOTE ${note.noteId} | DATE: ${note.dateLabel} | TITLE: ${JSON.stringify(note.title)}]`,
     note.lines.map((line, index) => `${note.noteId}|L${index + 1}| ${line}`).join("\n"),
@@ -414,7 +419,7 @@ function buildOverviewPrompt(notes) {
   ].join("\n"));
 
   return [
-    buildTimelineIndex(notes),
+    buildTimelineIndex(notes, birthdate),
     "",
     "NOTES — CHRONOLOGICAL, FULL TEXT",
     noteBlocks.join("\n\n")
@@ -436,7 +441,7 @@ function splitNoteText(text) {
   return { lines, lineEndings };
 }
 
-function buildTimelineIndex(notes) {
+function buildTimelineIndex(notes, birthdate) {
   const countsByYear = new Map();
 
   for (const note of notes) {
@@ -453,11 +458,16 @@ function buildTimelineIndex(notes) {
     ? "none"
     : formatDateRange(notes[0].dateLabel, notes[notes.length - 1].dateLabel);
   const rows = [
-    "TIMELINE INDEX — SERVER-COMPUTED AND AUTHORITATIVE",
+    "TIMELINE INDEX — SERVER-COMPUTED AND AUTHORITATIVE"
+  ];
+  if (birthdate) {
+    rows.push(`PERSON'S DATE OF BIRTH: ${birthdate}. Ages at any note can therefore be computed exactly from that note's server-provided date.`);
+  }
+  rows.push(
     "| Scope | Date or range | Note count |",
     "| --- | --- | ---: |",
     `| Overall | ${overallRange} | ${notes.length} |`
-  ];
+  );
 
   for (const [year, yearCounts] of [...countsByYear.entries()].sort((a, b) => a[0] - b[0])) {
     rows.push(`| Year | ${year} | ${yearCounts.total} |`);
@@ -470,6 +480,16 @@ function buildTimelineIndex(notes) {
   }
 
   return rows.join("\n");
+}
+
+function normalizeIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    return null;
+  }
+  const timestamp = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value
+    ? value
+    : null;
 }
 
 function formatDateLabel(timestamp) {
