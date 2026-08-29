@@ -45,7 +45,8 @@ Thin archives get shorter honest answers, never invented depth.`);
   assert.match(tool.description, /\{\{cite:0\}\}.*\{ noteId, startLine, endLine \}/s);
   assert.match(tool.description, /Use at most one token per sentence/);
   assert.match(tool.description, /substantive lines rather than trivial or decorative ones/);
-  assert.match(tool.description, /DATE AND SOURCE PROTOCOL: Never write a year, month, calendar date, date range, bare age/);
+  assert.match(tool.description, /DATE AND SOURCE PROTOCOL: Never write a calendar year or month, calendar date, date range, bare age/);
+  assert.match(tool.description, /describe time relatively.*"in your late twenties".*"years later"/);
   assert.match(tool.description, /server computes displayed dates strictly from createdAt metadata/);
   const schema = upstreamBody.tools[0].input_schema;
   assert.deepEqual(Object.keys(schema.properties), [
@@ -73,7 +74,11 @@ Thin archives get shorter honest answers, never invented depth.`);
   }
   assert.match(schema.properties.portrait.description, /Who this person is, said plainly/);
   assert.match(schema.properties.read.description, /what they're like underneath, what they keep returning to, and what has stayed constant/);
-  assert.equal(schema.properties.tender.description, "Where the notes hold emotional weight — grief, love, worry, care — say what you noticed in what they did. Be specific about the behaviour; don't interpret the feeling for them. This covers ordinary tenderness too, not only loss: care for a child, small domestic details threaded through work notes, moments where they're being a person rather than a professional. Must stand alone and never open with a transitional word.");
+  assert.equal(schema.properties.tender.description, "Where the notes hold emotional weight — grief, love, worry, care — say what you noticed in what they did. Be specific about the behaviour; don't interpret the feeling for them. This covers ordinary tenderness too, not only loss: care for a child, small domestic details threaded through work notes, moments where they're being a person rather than a professional. Must stand alone and never open with a transitional word. You may describe time relatively, but never write a calendar year or month.");
+  assert.match(schema.properties.portrait.description, /describe time relatively, but never write a calendar year or month/);
+  assert.match(schema.properties.read.description, /describe time relatively, but never write a calendar year or month/);
+  assert.match(schema.properties.forgottenIdeas.description, /describe time relatively, but never write a calendar year or month/);
+  assert.match(schema.properties.questions.description, /describe time relatively, but never include.*calendar year or month/);
   assert.match(schema.properties.portraitCitations.description, /Token index N refers to locator index N/);
   assert.match(schema.properties.readCitations.description, /server extracts the exact quote; never write quote text yourself/i);
   assert.equal(schema.properties.seasons, undefined);
@@ -180,7 +185,7 @@ test("import overview substitutes exact line locators, computes dates, and remov
   assert.equal(restore.requests.length, 1);
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.equal(result.portrait, "You wrote “exact phrase\r\nsecond exact line” in a list. This remains.");
+  assert.equal(result.portrait, "You wrote “exact phrase second exact line” in a list. This remains.");
   assert.deepEqual(result.portraitCitations, [{ noteId: "n1", startLine: 1, endLine: 2 }]);
   assert.equal(result.read, "Another thought remains. This empty source said “second exact line”. The pattern remains.");
   assert.deepEqual(result.readCitations, [{ noteId: "n1", startLine: 2, endLine: 2 }]);
@@ -245,6 +250,144 @@ test("import overview wraps extracted text with one balanced quote pair and clea
   assert.equal((result.portrait.match(/“/gu) || []).length, 2);
   assert.equal((result.portrait.match(/”/gu) || []).length, 2);
   assert.doesNotMatch(result.portrait, /["„‟″«»]/u);
+});
+
+test("import overview cleans markdown, whitespace, and duplicate clauses from extracted quotes", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "You described it as {{cite:0}} in your notes. You kept repeating {{cite:1}}.",
+    portraitCitations: [
+      { noteId: "n1", startLine: 1, endLine: 2 },
+      { noteId: "n1", startLine: 3, endLine: 5 }
+    ]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note(
+      "one",
+      "One",
+      "# My mind constantly is finding patterns, correlation with being easily… #\nMy mind constantly is finding patterns, correlation with being easily distracted and also my creativity.\n> Keep building\n* with care\n- [ ] and stay direct",
+      "2026-08-25T00:00:00.000Z"
+    )
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You described it as “My mind constantly is finding patterns, correlation with being easily distracted and also my creativity” in your notes. You kept repeating “Keep building with care and stay direct”.");
+  assert.doesNotMatch(result.portrait, /#|\[ \]|\n|easily….*My mind/u);
+  assert.deepEqual(result.portraitCitations, [
+    { noteId: "n1", startLine: 1, endLine: 2 },
+    { noteId: "n1", startLine: 3, endLine: 5 }
+  ]);
+  assert.deepEqual(result.verification, {
+    totalCitations: 2,
+    passed: 2,
+    failed: 0,
+    failures: []
+  });
+});
+
+test("import overview preserves relative time and removes only calendar references", async (context) => {
+  const providerInput = baseOverviewInput({
+    read: "In your late twenties, you started building in public. Years later, you returned to the same problem. Early on, you tracked every attempt. In March 2024, you launched it. From 2019 to 2021, you kept a tally."
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Safe source text", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.read, "In your late twenties, you started building in public. Years later, you returned to the same problem. Early on, you tracked every attempt.");
+  assert.deepEqual(result.verification, {
+    totalCitations: 2,
+    passed: 0,
+    failed: 2,
+    failures: [
+      { noteId: "", startLine: null, endLine: null, reason: "date_in_prose" },
+      { noteId: "", startLine: null, endLine: null, reason: "date_in_prose" }
+    ]
+  });
+});
+
+test("import overview removes corrupt words or their sentences across every text field", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "You're ambitious, and你're most honest when building. You keep going.",
+    read: "You value 你 careful work. This stays intact.",
+    forgottenIdeas: [{
+      title: "A clean你 title.",
+      sourceNoteId: "n1",
+      why: "You made 你 a checklist. It still works.",
+      citations: []
+    }],
+    tender: "You leave 小 notes for your child. You pack lunch. You remember the small things.",
+    questions: ["What do你 want?", "What still matters?", "What would you build again?"]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Safe source text", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You keep going.");
+  assert.equal(result.read, "You value careful work. This stays intact.");
+  assert.deepEqual(result.forgottenIdeas, [{
+    title: "",
+    whenWritten: "Aug 2026",
+    why: "You made a checklist. It still works.",
+    citations: []
+  }]);
+  assert.equal(result.tender, "You leave notes for your child. You pack lunch. You remember the small things.");
+  assert.deepEqual(result.questions, ["What still matters?", "What would you build again?"]);
+  assert.doesNotMatch(JSON.stringify(result), /你|小/u);
+  assert.deepEqual(result.verification, {
+    totalCitations: 7,
+    passed: 1,
+    failed: 6,
+    failures: Array.from({ length: 6 }, () => ({
+      noteId: "",
+      startLine: null,
+      endLine: null,
+      reason: "corrupt_text"
+    }))
+  });
+});
+
+test("import overview rejects corrupt extracted quotes before substitution", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "You wrote {{cite:0}}. The clean sentence remains.",
+    portraitCitations: [{ noteId: "n1", startLine: 1, endLine: 1 }]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "I am and你're most honest", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "The clean sentence remains.");
+  assert.deepEqual(result.portraitCitations, []);
+  assert.deepEqual(result.verification, {
+    totalCitations: 1,
+    passed: 0,
+    failed: 1,
+    failures: [{
+      noteId: "n1",
+      startLine: 1,
+      endLine: 1,
+      citationIndex: 0,
+      citationsAvailable: 1,
+      reason: "corrupt_text"
+    }]
+  });
 });
 
 test("import overview allows relationship-based loss while removing health and named deceased prose", async (context) => {

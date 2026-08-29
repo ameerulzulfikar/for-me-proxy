@@ -75,6 +75,13 @@ const PARTNER_NAME_PATTERNS = [
 ];
 const QUOTE_DATE_PATTERN = /\b(?:\d{4}-\d{1,2}(?:-\d{1,2})?|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:18|19|20|21)\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(?:18|19|20|21)\d{2})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+(?:18|19|20|21)\d{2})?)\b/iu;
 const LEADING_QUOTE_DATE_PATTERN = /^(?:on|in|at|by|from|since|until|as\s+of)?\s*(?:\d{4}-\d{1,2}(?:-\d{1,2})?|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|(?:18|19|20|21)\d{2}|\d{1,2}(?:st|nd|rd|th)?\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+(?:18|19|20|21)\d{2})?|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+(?:18|19|20|21)\d{2})?)\b/iu;
+const CALENDAR_YEAR_SOURCE = String.raw`(?:18|19|20|21)\d{2}`;
+const CALENDAR_MONTH_SOURCE = String.raw`(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)`;
+const CALENDAR_ENDPOINT_SOURCE = String.raw`(?:${CALENDAR_MONTH_SOURCE}\.?\s+)?${CALENDAR_YEAR_SOURCE}`;
+const CALENDAR_REFERENCE_PATTERN = new RegExp(
+  String.raw`\b(?:${CALENDAR_ENDPOINT_SOURCE}\s*(?:-|–|—|to|through)\s*${CALENDAR_ENDPOINT_SOURCE}|${CALENDAR_MONTH_SOURCE}\.?\s*(?:-|–|—|to|through)\s*${CALENDAR_MONTH_SOURCE}\.?\s+${CALENDAR_YEAR_SOURCE}|${CALENDAR_MONTH_SOURCE}\.?\s+${CALENDAR_YEAR_SOURCE}|${CALENDAR_YEAR_SOURCE})\b`,
+  "giu"
+);
 
 const systemPrompt = `
 Someone has just handed you everything they've written down for years — thousands of private notes, kept for themselves, never meant to be read like this. Your job is to tell them what you see.
@@ -136,7 +143,7 @@ const overviewTool = {
 
 QUOTE PROTOCOL: Never write or reconstruct quote text. Put a token such as {{cite:0}} at the grammatically natural position where the quote belongs, then put { noteId, startLine, endLine } at index 0 of that section's citations array. Line ranges are inclusive. Citation indexes start at 0 and are local to the adjacent section or forgotten idea. Every token must have a matching locator, and every locator must be used by a token. Use at most one token per sentence. Never place tokens next to each other or append one after a complete sentence; lead into it naturally with words such as "writing that" or "you called it". Choose short, revealing, substantive lines rather than trivial or decorative ones. Do not choose a span whose main content is a date. The server extracts, verifies, privacy-screens, and inserts the exact words.
 
-DATE AND SOURCE PROTOCOL: Never write a year, month, calendar date, date range, bare age, period field, or whenWritten field in any prose, title, explanation, or question. Use relative language such as "early on", "years later", or "in the last stretch". Structured source IDs establish chronology; dates written inside note text do not. The server computes displayed dates strictly from createdAt metadata. For each forgotten idea, return its single sourceNoteId so the server can compute whenWritten. Never state or imply a note count greater than the number supplied.`,
+DATE AND SOURCE PROTOCOL: Never write a calendar year or month, calendar date, date range, bare age, period field, or whenWritten field in any prose, title, explanation, or question. You may describe time relatively with language such as "in your late twenties", "early on", "years later", or "in the last stretch". Structured source IDs establish chronology; dates written inside note text do not. The server computes displayed dates strictly from createdAt metadata. For each forgotten idea, return its single sourceNoteId so the server can compute whenWritten. Never state or imply a note count greater than the number supplied.`,
   input_schema: {
     type: "object",
     additionalProperties: false,
@@ -144,19 +151,19 @@ DATE AND SOURCE PROTOCOL: Never write a year, month, calendar date, date range, 
     properties: {
       portrait: {
         type: "string",
-        description: "Who this person is, said plainly, the way you'd describe a friend to someone who hasn't met them. Place them concretely in a sentence or two — where they live, what they do, family situation where the notes establish it — then say what they're like. Keep achievements and venture names compressed. End with one sentence naming the central tension of their life as they themselves seem to understand it; make it the most quotable line in the response. Don't hedge here. If quoting, insert only a {{cite:N}} token in a grammatically natural position; never write quote text or dates."
+        description: "Who this person is, said plainly, the way you'd describe a friend to someone who hasn't met them. Place them concretely in a sentence or two — where they live, what they do, family situation where the notes establish it — then say what they're like. Keep achievements and venture names compressed. End with one sentence naming the central tension of their life as they themselves seem to understand it; make it the most quotable line in the response. Don't hedge here. If quoting, insert only a {{cite:N}} token in a grammatically natural position; never write quote text. You may describe time relatively, but never write a calendar year or month."
       },
       portraitCitations: createCitationsSchema("portrait"),
       read: {
         type: "string",
-        description: "The deeper look: what they're like underneath, what they keep returning to, and what has stayed constant while the surface changed. Connect these rather than treating them as separate topics. Every claim descends into the specific behaviour, quoted line, named project or tracked number behind it. Hedge here where the evidence genuinely leaves room for another reading. If quoting, insert only a {{cite:N}} token in a grammatically natural position; never write quote text or dates."
+        description: "The deeper look: what they're like underneath, what they keep returning to, and what has stayed constant while the surface changed. Connect these rather than treating them as separate topics. Every claim descends into the specific behaviour, quoted line, named project or tracked number behind it. Hedge here where the evidence genuinely leaves room for another reading. If quoting, insert only a {{cite:N}} token in a grammatically natural position; never write quote text. You may describe time relatively, but never write a calendar year or month."
       },
       readCitations: createCitationsSchema("read"),
       forgottenIdeas: {
         type: "array",
         minItems: 4,
         maxItems: 5,
-        description: "4-5 specific ideas from the archive that are genuinely forgotten or easily overlooked, each with the sourceNoteId where it appears and a concise reason it's worth revisiting. Never write dates; the server derives whenWritten from sourceNoteId metadata.",
+        description: "4-5 specific ideas from the archive that are genuinely forgotten or easily overlooked, each with the sourceNoteId where it appears and a concise reason it's worth revisiting. You may describe time relatively, but never write a calendar year or month; the server derives whenWritten from sourceNoteId metadata.",
         items: {
           type: "object",
           additionalProperties: false,
@@ -164,7 +171,7 @@ DATE AND SOURCE PROTOCOL: Never write a year, month, calendar date, date range, 
           properties: {
             title: {
               type: "string",
-              description: "A short, specific title for the overlooked idea. Do not include a date or citation token."
+              description: "A short, specific title for the overlooked idea. Do not include a citation token or a calendar year or month."
             },
             sourceNoteId: {
               type: "string",
@@ -172,7 +179,7 @@ DATE AND SOURCE PROTOCOL: Never write a year, month, calendar date, date range, 
             },
             why: {
               type: "string",
-              description: "A concise reason this idea is worth revisiting. If quoting, insert only a {{cite:N}} token referring to this idea's citations array; never write quote text or dates."
+              description: "A concise reason this idea is worth revisiting. If quoting, insert only a {{cite:N}} token referring to this idea's citations array; never write quote text. You may describe time relatively, but never write a calendar year or month."
             },
             citations: createCitationsSchema("this forgotten idea's why field")
           },
@@ -181,17 +188,17 @@ DATE AND SOURCE PROTOCOL: Never write a year, month, calendar date, date range, 
       },
       tender: {
         type: "string",
-        description: "Where the notes hold emotional weight — grief, love, worry, care — say what you noticed in what they did. Be specific about the behaviour; don't interpret the feeling for them. This covers ordinary tenderness too, not only loss: care for a child, small domestic details threaded through work notes, moments where they're being a person rather than a professional. Must stand alone and never open with a transitional word."
+        description: "Where the notes hold emotional weight — grief, love, worry, care — say what you noticed in what they did. Be specific about the behaviour; don't interpret the feeling for them. This covers ordinary tenderness too, not only loss: care for a child, small domestic details threaded through work notes, moments where they're being a person rather than a professional. Must stand alone and never open with a transitional word. You may describe time relatively, but never write a calendar year or month."
       },
       tenderCitations: createCitationsSchema("tender"),
       questions: {
         type: "array",
         minItems: 3,
         maxItems: 3,
-        description: "Exactly three questions you'd genuinely want to ask this person, that only their own archive could answer. Second person, short, curious, never rhetorical. Questions have no citations: never include citation tokens, quote text, dates, or bare ages.",
+        description: "Exactly three questions you'd genuinely want to ask this person, that only their own archive could answer. Second person, short, curious, never rhetorical. Questions have no citations. You may describe time relatively, but never include citation tokens, quote text, a calendar year or month, or a bare age.",
         items: {
           type: "string",
-          description: "One short, genuine second-person question with no citation token, quote, date, or bare age."
+          description: "One short, genuine second-person question. Relative time language is allowed; a citation token, quote, calendar year or month, or bare age is not."
         }
       }
     },
@@ -696,7 +703,8 @@ function verifyOverview(overview, notes) {
 }
 
 function verifyProse(text, citations, notesById, verification) {
-  const privacyScreened = screenProseForPrivacy(text, verification);
+  const corruptionScreened = screenProseForCorruption(text, verification);
+  const privacyScreened = screenProseForPrivacy(corruptionScreened, verification);
   const withoutDates = stripDatesFromProse(privacyScreened, verification);
   return substituteCitationTokens(withoutDates, citations, notesById, verification);
 }
@@ -710,6 +718,84 @@ function verifyQuestion(question, notesById, verification) {
   return hadBlockingFailure ? "" : verified.text;
 }
 
+function screenProseForCorruption(text, verification) {
+  const removalRanges = [];
+  const replacements = [];
+
+  for (const range of findAllSentenceRanges(text)) {
+    const sentence = text.slice(range.start, range.end);
+    const cleaned = cleanCorruptEnglishSentence(sentence);
+    if (!cleaned.corrupt) {
+      continue;
+    }
+
+    recordProseScreenFailure(verification, "corrupt_text");
+    if (!cleaned.text) {
+      removalRanges.push(expandRangeThroughDanglingSentences(text, range));
+    } else {
+      replacements.push({ ...range, replacement: cleaned.text });
+    }
+  }
+
+  const mergedRemovalRanges = mergeRanges(removalRanges);
+  const usableReplacements = replacements.filter((replacement) => !mergedRemovalRanges.some((range) => rangesOverlap(replacement, range)));
+  const operations = [
+    ...mergedRemovalRanges.map((range) => ({ ...range, kind: "removal" })),
+    ...usableReplacements.map((replacement) => ({ ...replacement, kind: "replacement" }))
+  ].sort((first, second) => second.start - first.start);
+  let screenedText = text;
+
+  for (const operation of operations) {
+    if (operation.kind === "replacement") {
+      screenedText = `${screenedText.slice(0, operation.start)}${operation.replacement}${screenedText.slice(operation.end)}`;
+    } else {
+      screenedText = removeTextRange(screenedText, operation);
+    }
+  }
+
+  return mergedRemovalRanges.length > 0 ? removeLeadingFragments(screenedText).trim() : screenedText.trim();
+}
+
+function cleanCorruptEnglishSentence(sentence) {
+  const tokens = sentence.match(/\S+/gu) || [];
+  const corruptTokens = tokens.filter(hasUnexpectedNonLatinLetter);
+  if (corruptTokens.length === 0 || !isOtherwiseEnglish(sentence)) {
+    return { text: sentence, corrupt: false };
+  }
+
+  if (corruptTokens.some((token) => /\p{Script=Latin}/u.test(token))) {
+    return { text: "", corrupt: true };
+  }
+
+  const text = sentence
+    .replace(/\S+/gu, (token) => hasUnexpectedNonLatinLetter(token) ? "" : token)
+    .replace(/[ \t]{2,}/gu, " ")
+    .replace(/\s+([,.;:!?])/gu, "$1")
+    .trim();
+  const isBroken = !text
+    || !/[.!?](?:["'”’)}\]]+)?$/u.test(text)
+    || /^[a-z]/u.test(text)
+    || /^(?:and|but|because|so|which|while|whereas|with|without|although|though)\b/iu.test(text)
+    || (text.match(/\b[\p{Script=Latin}\p{N}][\p{Script=Latin}\p{N}'’.-]*\b/gu) || []).length < 3;
+  return { text: isBroken ? "" : text, corrupt: true };
+}
+
+function hasUnexpectedNonLatinLetter(value) {
+  return [...value].some((character) => (
+    /[\p{L}\p{M}]/u.test(character)
+    && !/[\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(character)
+  ));
+}
+
+function isOtherwiseEnglish(value) {
+  const latinLetters = (value.match(/\p{Script=Latin}/gu) || []).length;
+  const unexpectedLetters = [...value].filter((character) => (
+    /[\p{L}\p{M}]/u.test(character)
+    && !/[\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(character)
+  )).length;
+  return latinLetters >= 4 && latinLetters > unexpectedLetters * 2;
+}
+
 function screenProseForPrivacy(text, verification) {
   const removalRanges = [];
   const redactions = [];
@@ -718,14 +804,14 @@ function screenProseForPrivacy(text, verification) {
     const sentence = text.slice(range.start, range.end);
     const removalReason = detectRemovalPrivacyReason(sentence);
     if (removalReason) {
-      recordProsePrivacyFailure(verification, removalReason);
+      recordProseScreenFailure(verification, removalReason);
       removalRanges.push(expandRangeThroughDanglingSentences(text, range));
       continue;
     }
 
     const partnerRedaction = redactPartnerNames(sentence);
     if (partnerRedaction.redacted) {
-      recordProsePrivacyFailure(verification, "privacy_partner");
+      recordProseScreenFailure(verification, "privacy_partner");
       redactions.push({ ...range, replacement: partnerRedaction.text });
     }
   }
@@ -817,7 +903,7 @@ function redactPartnerNames(value) {
   return { text, redacted };
 }
 
-function recordProsePrivacyFailure(verification, reason) {
+function recordProseScreenFailure(verification, reason) {
   verification.totalCitations += 1;
   recordVerificationFailure(verification, {
     noteId: "",
@@ -829,10 +915,9 @@ function recordProsePrivacyFailure(verification, reason) {
 
 function stripDatesFromProse(text, verification) {
   const maskedText = text.replace(/\{\{\s*cite\s*:[^{}]*\}\}/giu, (token) => " ".repeat(token.length));
-  const datePattern = /\b\d{4}-\d{1,2}(?:-\d{1,2})?\b|\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b|\b(?:18|19|20|21)\d{2}\b|\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\.?\s+(?:\d{1,2}(?:st|nd|rd|th)?(?:,?\s+(?:18|19|20|21)\d{2})?|(?:18|19|20|21)\d{2}))?\b/gu;
   const removalRanges = [];
 
-  for (const match of maskedText.matchAll(datePattern)) {
+  for (const match of maskedText.matchAll(CALENDAR_REFERENCE_PATTERN)) {
     verification.totalCitations += 1;
     recordVerificationFailure(verification, {
       noteId: "",
@@ -889,7 +974,20 @@ function substituteCitationTokens(text, citations, notesById, verification) {
       continue;
     }
 
-    if (isDateDominatedQuote(resolved.span)) {
+    const cleanedSpan = cleanExtractedSpan(resolved.span);
+    if (!cleanedSpan) {
+      recordCitationFailure(verification, citation, citationIndex, citations.length, "empty_span");
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
+      continue;
+    }
+
+    if (hasUnexpectedNonLatinLetter(cleanedSpan) && isOtherwiseEnglish(cleanedSpan)) {
+      recordCitationFailure(verification, citation, citationIndex, citations.length, "corrupt_text");
+      invalidRanges.push(findSentenceRange(text, token.start, token.end));
+      continue;
+    }
+
+    if (isDateDominatedQuote(cleanedSpan)) {
       recordCitationFailure(verification, citation, citationIndex, citations.length, "date_in_quote");
       invalidRanges.push(findSentenceRange(text, token.start, token.end));
       continue;
@@ -910,7 +1008,7 @@ function substituteCitationTokens(text, citations, notesById, verification) {
       continue;
     }
 
-    const formattedQuote = formatExtractedQuote(resolved.span, text.slice(token.end));
+    const formattedQuote = formatExtractedQuote(cleanedSpan, text.slice(token.end));
     if (!formattedQuote) {
       recordCitationFailure(verification, citation, citationIndex, citations.length, "empty_span");
       invalidRanges.push(findSentenceRange(text, token.start, token.end));
@@ -1045,17 +1143,86 @@ function extractLineSpan(note, startLine, endLine) {
   return span;
 }
 
+function cleanExtractedSpan(span) {
+  const lines = span
+    .split(/\r\n|\n|\r/u)
+    .map(stripMarkdownFromExtractedLine)
+    .map((line) => line.replace(/\s+/gu, " ").trim())
+    .filter(Boolean);
+  const uniqueLines = [];
+
+  for (const line of lines) {
+    let duplicateIndex = -1;
+    for (let index = 0; index < uniqueLines.length; index += 1) {
+      if (areDuplicateExtractedClauses(uniqueLines[index], line)) {
+        duplicateIndex = index;
+        break;
+      }
+    }
+
+    if (duplicateIndex === -1) {
+      uniqueLines.push(line);
+    } else if (normalizeExtractedClause(line).length > normalizeExtractedClause(uniqueLines[duplicateIndex]).length) {
+      uniqueLines[duplicateIndex] = line;
+    }
+  }
+
+  return uniqueLines.join(" ").replace(/\s+/gu, " ").trim();
+}
+
+function stripMarkdownFromExtractedLine(value) {
+  let line = value.trim();
+  let previous = null;
+
+  while (line && line !== previous) {
+    previous = line;
+    line = line
+      .replace(/^(?:[-+*]\s*)?\[(?: |x|X)\]\s*/u, "")
+      .replace(/^(?:#{1,6}|>)\s*/u, "")
+      .replace(/^[-+*]\s+/u, "")
+      .trimStart();
+  }
+
+  return line.replace(/\s+(?:#{1,6}|[*_]{1,3})\s*$/u, "").trim();
+}
+
+function areDuplicateExtractedClauses(first, second) {
+  const normalizedFirst = normalizeExtractedClause(first);
+  const normalizedSecond = normalizeExtractedClause(second);
+  if (!normalizedFirst || !normalizedSecond) {
+    return false;
+  }
+  if (normalizedFirst === normalizedSecond) {
+    return true;
+  }
+
+  const shorter = normalizedFirst.length < normalizedSecond.length ? normalizedFirst : normalizedSecond;
+  const longer = normalizedFirst.length < normalizedSecond.length ? normalizedSecond : normalizedFirst;
+  const wordCount = (shorter.match(/[\p{L}\p{N}]+/gu) || []).length;
+  return shorter.length >= 30 && wordCount >= 5 && longer.startsWith(shorter);
+}
+
+function normalizeExtractedClause(value) {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("en")
+    .replace(/(?:\.{2,}|…)+$/u, "")
+    .replace(/[.!?,;:]+$/u, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
 function trimQuotedSpan(span) {
-  if (span.length <= 200) {
-    return span;
-  }
-
-  const firstTwoHundred = span.slice(0, 200);
-  const firstSentence = /[.!?]["'”’)]?(?=\s|$)/u.exec(firstTwoHundred);
+  const normalized = span.replace(/\s+/gu, " ").trim();
+  const firstSentence = /[.!?](?:["'”’)}\]]+)?(?=\s|$)/u.exec(normalized);
   if (firstSentence) {
-    return firstTwoHundred.slice(0, firstSentence.index + firstSentence[0].length).trimEnd();
+    return normalized.slice(0, firstSentence.index + firstSentence[0].length).trimEnd();
+  }
+  if (normalized.length <= 200) {
+    return normalized;
   }
 
+  const firstTwoHundred = normalized.slice(0, 200);
   const lastWhitespace = firstTwoHundred.search(/\s+\S*$/u);
   return (lastWhitespace > 0 ? firstTwoHundred.slice(0, lastWhitespace) : firstTwoHundred).trimEnd();
 }
