@@ -29,14 +29,13 @@ const HEALTH_PRIVACY_PATTERN = buildKeywordPattern([
   "coeliac disease", "celiac disease", "irritable bowel syndrome", "ibs", "hypertension",
   "high blood pressure", "heart disease", "kidney disease"
 ]);
-const DEATH_CONTEXT_PATTERN = /\b(?:death|died|dead|deceased|passed away|passing away|funeral|grief|grieve|grieved|grieving|mourn|mourned|mourning|bereavement|loss|lost)\b/iu;
-const DECEASED_RELATIONSHIP_PATTERN = /\b(?:sister|brother|sibling|mother|mum|mom|father|dad|parent|daughter|son|child|grandmother|grandma|grandfather|grandpa|aunt|uncle|cousin|niece|nephew|wife|husband|spouse|partner|fiancé|fiancée|girlfriend|boyfriend)\b/iu;
+const DEATH_CONTEXT_PATTERN = /\b(?:death|died|dead|deceased|late|passed away|passing away|funeral|eulogy|eulogies|obituary|obituaries|memorial|grief|grieve|grieved|grieving|mourn|mourned|mourning|bereavement|loss|lost)\b/iu;
 const PERSON_NAME_SOURCE = String.raw`[\p{Lu}][\p{L}\p{M}'’.-]{1,}`;
-const SPECIFIC_NAME_SOURCE = String.raw`(?!(?:You|Your|The|This|That|These|Those|There|When|While|After|Before|Since|During|Early|Later|Years|Months|Someone|Grief|Death|Loss|Family)\b)${PERSON_NAME_SOURCE}`;
+const SPECIFIC_NAME_SOURCE = String.raw`(?!(?:You|Your|My|His|Her|Their|Our|The|This|That|These|Those|There|When|While|After|Before|Since|During|Early|Later|Years|Months|Someone|Grief|Death|Loss|Family|Sister|Brother|Sibling|Mother|Mum|Mom|Father|Dad|Parent|Daughter|Son|Child|Grandmother|Grandma|Grandfather|Grandpa|Aunt|Uncle|Cousin|Niece|Nephew|Wife|Husband|Spouse|Partner|Fiancé|Fiancée|Girlfriend|Boyfriend)\b)${PERSON_NAME_SOURCE}`;
 const NAMED_DECEASED_PATTERNS = [
-  new RegExp(String.raw`\b${SPECIFIC_NAME_SOURCE}(?:'s|’s)?\s+(?:death|funeral|passing|grief|loss)\b`, "u"),
-  new RegExp(String.raw`\b${SPECIFIC_NAME_SOURCE}\b[^.!?\n]{0,40}\b(?:died|passed away|is dead|was deceased|grief|grieving|mourning)\b`, "u"),
-  new RegExp(String.raw`\b(?:death|funeral|grief|grieving|mourning|loss|lost)\b[^.!?\n]{0,24}\b(?:of|for|over)?\s*${SPECIFIC_NAME_SOURCE}\b`, "u")
+  new RegExp(String.raw`\b${SPECIFIC_NAME_SOURCE}(?:'s|’s)?\s+(?:death|funeral|eulogy|obituary|memorial|passing|grief|loss)\b`, "u"),
+  new RegExp(String.raw`\b${SPECIFIC_NAME_SOURCE}\b[^.!?\n]{0,40}\b(?:died|passed away|is dead|was deceased|was late|grief|grieving|mourning)\b`, "u"),
+  new RegExp(String.raw`\b(?:death|funeral|eulogy|obituary|memorial|late|grief|grieving|mourning|loss|lost)\b[^.!?\n]{0,24}\b(?:of|for|over)?\s*${SPECIFIC_NAME_SOURCE}\b`, "u")
 ];
 const PARTNER_RELATION_SOURCE = String.raw`(?:[Ww]ife|[Hh]usband|[Ss]pouse|[Pp]artner|[Ff]iancé|[Ff]iancée|[Gg]irlfriend|[Bb]oyfriend)`;
 const PARTNER_POSSESSIVE_SOURCE = String.raw`(?:[Yy]our|[Mm]y|[Hh]is|[Hh]er|[Tt]heir|[Tt]he)`;
@@ -95,7 +94,7 @@ Anything you claim should rest on something specific — a line they wrote, a pr
 Where you're unsure, say so plainly. 'I might be reading too much into this.' 'You'd know better than I would.' That honesty makes you trustworthy, not weak.
 
 WHAT NOT TO DO
-No personality types, no psychological frameworks, no diagnostic language. Never mention health conditions, treatments, therapy, or diagnoses. Never name or identify someone who died, or refer to them by relationship. Never name a partner or spouse — 'your wife' is fine, a name is not. You can acknowledge grief, love, and strain; do it without exposing the specifics. This holds everywhere, including in what you choose to quote.
+Describe what this person did, not what they must have felt. Observing that someone rewrote a eulogy four times is fair; declaring what their grief means is not. Don't name people who have died or a partner by name — 'your wife' is fine. Never mention health conditions, treatments, therapy or diagnoses, and never suggest someone has one. No personality types or psychological frameworks.
 
 Thin archives get shorter honest answers, never invented depth.
 `.trim();
@@ -182,7 +181,7 @@ DATE AND SOURCE PROTOCOL: Never write a year, month, calendar date, date range, 
       },
       tender: {
         type: "string",
-        description: "Brief and restrained. Acknowledge emotional weight where it's present — grief, love, strain — always in the abstract, never with names, relationships or specifics. Must stand alone; never open with a transitional word implying removed content. If quoting, insert only a {{cite:N}} token in a grammatically natural position; never write quote text or dates."
+        description: "Where the notes hold emotional weight — grief, love, worry, care — say what you noticed in what they did. Be specific about the behaviour; don't interpret the feeling for them. This covers ordinary tenderness too, not only loss: care for a child, small domestic details threaded through work notes, moments where they're being a person rather than a professional. Must stand alone and never open with a transitional word."
       },
       tenderCitations: createCitationsSchema("tender"),
       questions: {
@@ -662,7 +661,10 @@ function verifyOverview(overview, notes) {
 
   const portrait = verifyProse(overview.portrait, overview.portraitCitations, notesById, verification);
   const read = verifyProse(overview.read, overview.readCitations, notesById, verification);
-  const tender = verifyProse(overview.tender, overview.tenderCitations, notesById, verification);
+  const verifiedTender = verifyProse(overview.tender, overview.tenderCitations, notesById, verification);
+  const tender = hasCompleteTenderSection(verifiedTender.text)
+    ? verifiedTender
+    : { text: "", citations: [] };
 
   const forgottenIdeas = overview.forgottenIdeas.map((idea) => {
     const title = verifyProse(idea.title, [], notesById, verification);
@@ -674,7 +676,9 @@ function verifyOverview(overview, notes) {
       citations: why.citations
     };
   });
-  const questions = overview.questions.map((question) => verifyProse(question, [], notesById, verification).text);
+  const questions = overview.questions
+    .map((question) => verifyQuestion(question, notesById, verification))
+    .filter(Boolean);
 
   console.error(`Import overview verification totalCitations=${verification.totalCitations} passed=${verification.passed} failed=${verification.failed}`);
 
@@ -695,6 +699,15 @@ function verifyProse(text, citations, notesById, verification) {
   const privacyScreened = screenProseForPrivacy(text, verification);
   const withoutDates = stripDatesFromProse(privacyScreened, verification);
   return substituteCitationTokens(withoutDates, citations, notesById, verification);
+}
+
+function verifyQuestion(question, notesById, verification) {
+  const firstFailureIndex = verification.failures.length;
+  const verified = verifyProse(question, [], notesById, verification);
+  const hadBlockingFailure = verification.failures
+    .slice(firstFailureIndex)
+    .some((failure) => failure.reason !== "privacy_partner");
+  return hadBlockingFailure ? "" : verified.text;
 }
 
 function screenProseForPrivacy(text, verification) {
@@ -778,8 +791,15 @@ function containsPrivateDeceasedReference(value) {
   if (!DEATH_CONTEXT_PATTERN.test(value)) {
     return false;
   }
-  return DECEASED_RELATIONSHIP_PATTERN.test(value)
-    || NAMED_DECEASED_PATTERNS.some((pattern) => pattern.test(value));
+  return NAMED_DECEASED_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function hasCompleteTenderSection(value) {
+  const text = value.trim();
+  if (!/[.!?](?:["'”’)}\]]+)?$/u.test(text)) {
+    return false;
+  }
+  return (text.match(/[.!?](?:["'”’)}\]]+)?(?=\s|$)/gu) || []).length >= 2;
 }
 
 function redactPartnerNames(value) {

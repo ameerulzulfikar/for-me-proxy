@@ -36,7 +36,7 @@ Anything you claim should rest on something specific — a line they wrote, a pr
 Where you're unsure, say so plainly. 'I might be reading too much into this.' 'You'd know better than I would.' That honesty makes you trustworthy, not weak.
 
 WHAT NOT TO DO
-No personality types, no psychological frameworks, no diagnostic language. Never mention health conditions, treatments, therapy, or diagnoses. Never name or identify someone who died, or refer to them by relationship. Never name a partner or spouse — 'your wife' is fine, a name is not. You can acknowledge grief, love, and strain; do it without exposing the specifics. This holds everywhere, including in what you choose to quote.
+Describe what this person did, not what they must have felt. Observing that someone rewrote a eulogy four times is fair; declaring what their grief means is not. Don't name people who have died or a partner by name — 'your wife' is fine. Never mention health conditions, treatments, therapy or diagnoses, and never suggest someone has one. No personality types or psychological frameworks.
 
 Thin archives get shorter honest answers, never invented depth.`);
   assert.doesNotMatch(upstreamBody.system, /\{\{cite|startLine|endLine|calendar date|whenWritten|real estate|MOTIVE:/u);
@@ -73,7 +73,7 @@ Thin archives get shorter honest answers, never invented depth.`);
   }
   assert.match(schema.properties.portrait.description, /Who this person is, said plainly/);
   assert.match(schema.properties.read.description, /what they're like underneath, what they keep returning to, and what has stayed constant/);
-  assert.match(schema.properties.tender.description, /Must stand alone; never open with a transitional word/);
+  assert.equal(schema.properties.tender.description, "Where the notes hold emotional weight — grief, love, worry, care — say what you noticed in what they did. Be specific about the behaviour; don't interpret the feeling for them. This covers ordinary tenderness too, not only loss: care for a child, small domestic details threaded through work notes, moments where they're being a person rather than a professional. Must stand alone and never open with a transitional word.");
   assert.match(schema.properties.portraitCitations.description, /Token index N refers to locator index N/);
   assert.match(schema.properties.readCitations.description, /server extracts the exact quote; never write quote text yourself/i);
   assert.equal(schema.properties.seasons, undefined);
@@ -184,10 +184,11 @@ test("import overview substitutes exact line locators, computes dates, and remov
   assert.deepEqual(result.portraitCitations, [{ noteId: "n1", startLine: 1, endLine: 2 }]);
   assert.equal(result.read, "Another thought remains. This empty source said “second exact line”. The pattern remains.");
   assert.deepEqual(result.readCitations, [{ noteId: "n1", startLine: 2, endLine: 2 }]);
-  assert.equal(result.tender, "Care remains.");
+  assert.equal(result.tender, "");
+  assert.deepEqual(result.tenderCitations, []);
   assert.equal(result.forgottenIdeas[0].whenWritten, "Mar 2025");
   assert.equal(result.forgottenIdeas[1].whenWritten, "");
-  assert.deepEqual(result.questions, ["", "What do you still want to build?", "What keeps pulling you back?"]);
+  assert.deepEqual(result.questions, ["What do you still want to build?", "What keeps pulling you back?"]);
   assert.deepEqual(result.verification, {
     totalCitations: 10,
     passed: 4,
@@ -246,7 +247,7 @@ test("import overview wraps extracted text with one balanced quote pair and clea
   assert.doesNotMatch(result.portrait, /["„‟″«»]/u);
 });
 
-test("import overview removes private health and deceased prose while redacting only partner names", async (context) => {
+test("import overview allows relationship-based loss while removing health and named deceased prose", async (context) => {
   const providerInput = baseOverviewInput({
     portrait: "You see a psychologist regularly. Sertraline appears in your routine. You keep building.",
     read: "Your mother died and the loss changed your priorities. A death in the family still matters. Sarah died, and you still carry that grief. Someone close to you is part of your grief. You keep showing up. Your wife Priya supports your work. Ameer keeps his own name. Your child Zara appears in the plans. Your business partner Ravi appears in the launch notes. You married Priya deliberately. Your appetite for risk stayed constant.",
@@ -268,18 +269,17 @@ test("import overview removes private health and deceased prose while redacting 
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
   assert.equal(result.portrait, "You keep building.");
-  assert.equal(result.read, "A death in the family still matters. Someone close to you is part of your grief. You keep showing up. Your wife supports your work. Ameer keeps his own name. Your child Zara appears in the plans. Your business partner Ravi appears in the launch notes. You married your partner deliberately. Your appetite for risk stayed constant.");
+  assert.equal(result.read, "Your mother died and the loss changed your priorities. A death in the family still matters. Someone close to you is part of your grief. You keep showing up. Your wife supports your work. Ameer keeps his own name. Your child Zara appears in the plans. Your business partner Ravi appears in the launch notes. You married your partner deliberately. Your appetite for risk stayed constant.");
   assert.equal(result.forgottenIdeas[0].title, "");
   assert.equal(result.forgottenIdeas[0].whenWritten, "Aug 2026");
-  assert.deepEqual(result.questions, ["", "What do you still want?", "What keeps returning?"]);
+  assert.deepEqual(result.questions, ["What do you still want?", "What keeps returning?"]);
   assert.deepEqual(result.verification, {
-    totalCitations: 9,
+    totalCitations: 8,
     passed: 1,
-    failed: 8,
+    failed: 7,
     failures: [
       { noteId: "", startLine: null, endLine: null, reason: "privacy_health" },
       { noteId: "", startLine: null, endLine: null, reason: "privacy_health" },
-      { noteId: "", startLine: null, endLine: null, reason: "privacy_deceased" },
       { noteId: "", startLine: null, endLine: null, reason: "privacy_deceased" },
       { noteId: "", startLine: null, endLine: null, reason: "privacy_partner" },
       { noteId: "", startLine: null, endLine: null, reason: "privacy_partner" },
@@ -288,39 +288,140 @@ test("import overview removes private health and deceased prose while redacting 
     ]
   });
   assert.deepEqual(restore.loggedErrors, [
-    ["Import overview verification totalCitations=9 passed=1 failed=8"]
+    ["Import overview verification totalCitations=8 passed=1 failed=7"]
   ]);
 });
 
-test("import overview rejects private extracted quotes before substitution", async (context) => {
+test("import overview screens questions and both forgotten-idea prose fields", async (context) => {
   const providerInput = baseOverviewInput({
-    portrait: "You wrote {{cite:0}}. You wrote {{cite:1}}. You wrote {{cite:2}}. You also wrote {{cite:3}}.",
-    portraitCitations: [
-      { noteId: "n1", startLine: 1, endLine: 1 },
-      { noteId: "n1", startLine: 2, endLine: 2 },
-      { noteId: "n1", startLine: 3, endLine: 3 },
-      { noteId: "n1", startLine: 4, endLine: 4 }
+    forgottenIdeas: [
+      {
+        title: "Sarah's eulogy outline.",
+        sourceNoteId: "n1",
+        why: "It could support psoriasis treatment.",
+        citations: []
+      },
+      {
+        title: "A family care checklist.",
+        sourceNoteId: "n1",
+        why: "You rewrote your mother's eulogy four times.",
+        citations: []
+      }
+    ],
+    questions: [
+      "How did psoriasis shape the project? What would you repeat?",
+      "What did Sarah's death make you change?",
+      "What did your wife Priya make possible?"
     ]
   });
   installProviderMock(context, () => successfulProviderResponse(providerInput));
   const response = createResponse();
 
   await handler(createRequest([
-    note("one", "One", "My therapist told me to rest\nMy sister died when I was young\nMy wife Priya backed the move\nI chose the bigger outcome", "2026-08-25T00:00:00.000Z")
+    note("one", "One", "Safe source text", "2026-08-25T00:00:00.000Z")
   ]), response);
 
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.equal(result.portrait, "You also wrote “I chose the bigger outcome”.");
-  assert.deepEqual(result.portraitCitations, [{ noteId: "n1", startLine: 4, endLine: 4 }]);
+  assert.deepEqual(result.forgottenIdeas, [
+    {
+      title: "",
+      whenWritten: "Aug 2026",
+      why: "",
+      citations: []
+    },
+    {
+      title: "A family care checklist.",
+      whenWritten: "Aug 2026",
+      why: "You rewrote your mother's eulogy four times.",
+      citations: []
+    }
+  ]);
+  assert.deepEqual(result.questions, ["What did your wife make possible?"]);
+  assert.doesNotMatch(JSON.stringify(result), /Sarah|psoriasis|Priya/u);
   assert.deepEqual(result.verification, {
-    totalCitations: 4,
-    passed: 1,
+    totalCitations: 7,
+    passed: 2,
+    failed: 5,
+    failures: [
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_deceased" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_health" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_health" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_deceased" },
+      { noteId: "", startLine: null, endLine: null, reason: "privacy_partner" }
+    ]
+  });
+});
+
+test("import overview keeps only complete tender sections with at least two sentences", async (context) => {
+  const providerInputs = [
+    baseOverviewInput({
+      tender: "You rewrote your sister's eulogy four times. You kept your child's snack list beside the launch plan."
+    }),
+    baseOverviewInput({
+      tender: "You kept the school note beside the launch plan. You packed lunch before the investor call"
+    }),
+    baseOverviewInput({
+      tender: "You discussed therapy weekly. You kept the school note beside the launch plan."
+    })
+  ];
+  installProviderMock(context, () => successfulProviderResponse(providerInputs.shift()));
+  const notes = [note("one", "One", "Safe source text", "2026-08-25T00:00:00.000Z")];
+
+  const completeResponse = createResponse();
+  await handler(createRequest(notes), completeResponse);
+  const completeResult = JSON.parse(completeResponse.body);
+  assert.equal(completeResult.tender, "You rewrote your sister's eulogy four times. You kept your child's snack list beside the launch plan.");
+
+  const unterminatedResponse = createResponse();
+  await handler(createRequest(notes), unterminatedResponse);
+  const unterminatedResult = JSON.parse(unterminatedResponse.body);
+  assert.equal(unterminatedResult.tender, "");
+  assert.deepEqual(unterminatedResult.tenderCitations, []);
+
+  const screenedResponse = createResponse();
+  await handler(createRequest(notes), screenedResponse);
+  const screenedResult = JSON.parse(screenedResponse.body);
+  assert.equal(screenedResult.tender, "");
+  assert.deepEqual(screenedResult.tenderCitations, []);
+  assert.deepEqual(screenedResult.verification.failures, [
+    { noteId: "", startLine: null, endLine: null, reason: "privacy_health" }
+  ]);
+});
+
+test("import overview rejects private extracted quotes before substitution", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "You wrote {{cite:0}}. You wrote {{cite:1}}. You wrote {{cite:2}}. You wrote {{cite:3}}. You also wrote {{cite:4}}.",
+    portraitCitations: [
+      { noteId: "n1", startLine: 1, endLine: 1 },
+      { noteId: "n1", startLine: 2, endLine: 2 },
+      { noteId: "n1", startLine: 3, endLine: 3 },
+      { noteId: "n1", startLine: 4, endLine: 4 },
+      { noteId: "n1", startLine: 5, endLine: 5 }
+    ]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "My therapist told me to rest\nI rewrote my sister's eulogy four times\nSarah's eulogy took four drafts\nMy wife Priya backed the move\nI chose the bigger outcome", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You wrote “I rewrote my sister's eulogy four times”. You also wrote “I chose the bigger outcome”.");
+  assert.deepEqual(result.portraitCitations, [
+    { noteId: "n1", startLine: 2, endLine: 2 },
+    { noteId: "n1", startLine: 5, endLine: 5 }
+  ]);
+  assert.deepEqual(result.verification, {
+    totalCitations: 5,
+    passed: 2,
     failed: 3,
     failures: [
-      { noteId: "n1", startLine: 1, endLine: 1, citationIndex: 0, citationsAvailable: 4, reason: "privacy_health" },
-      { noteId: "n1", startLine: 2, endLine: 2, citationIndex: 1, citationsAvailable: 4, reason: "privacy_deceased" },
-      { noteId: "n1", startLine: 3, endLine: 3, citationIndex: 2, citationsAvailable: 4, reason: "privacy_partner" }
+      { noteId: "n1", startLine: 1, endLine: 1, citationIndex: 0, citationsAvailable: 5, reason: "privacy_health" },
+      { noteId: "n1", startLine: 3, endLine: 3, citationIndex: 2, citationsAvailable: 5, reason: "privacy_deceased" },
+      { noteId: "n1", startLine: 4, endLine: 4, citationIndex: 3, citationsAvailable: 5, reason: "privacy_partner" }
     ]
   });
 });
