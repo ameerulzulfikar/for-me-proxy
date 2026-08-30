@@ -33,6 +33,8 @@ Use their own stated reasons for what they did. Where motive is genuinely unclea
 
 Anything you claim should rest on something specific — a line they wrote, a project they named, a number they tracked, a thing they did repeatedly. An observation with evidence beats three without. When you quote, the quoted line must itself be the evidence for the sentence around it. If the line doesn't demonstrate your claim, either find the line that does or drop the quote and make the claim without it. And somewhere in here, tell them at least two things they probably haven't put into words about themselves: a pattern only visible across years, a contradiction between two parts of their life, something that stayed constant while they thought they were changing.
 
+You can mention an age when a note actually states it. Don't work out someone's age at other moments — if the notes don't say it, describe the stage of life instead.
+
 Where you're unsure, say so plainly. 'I might be reading too much into this.' 'You'd know better than I would.' That honesty makes you trustworthy, not weak.
 
 WHAT NOT TO DO
@@ -45,7 +47,8 @@ Thin archives get shorter honest answers, never invented depth.`);
   assert.match(tool.description, /\{\{cite:0\}\}.*\{ noteId, startLine, endLine \}/s);
   assert.match(tool.description, /Use at most one token per sentence/);
   assert.match(tool.description, /substantive lines rather than trivial or decorative ones/);
-  assert.match(tool.description, /DATE AND SOURCE PROTOCOL: Never write a calendar year or month, calendar date, date range, bare age/);
+  assert.match(tool.description, /DATE AND SOURCE PROTOCOL: Never write a calendar year or month, calendar date, date range, period field/);
+  assert.match(tool.description, /mention an age only when a note actually states it; never calculate one/);
   assert.match(tool.description, /describe time relatively.*"in your late twenties".*"years later"/);
   assert.match(tool.description, /server computes displayed dates strictly from createdAt metadata/);
   const schema = upstreamBody.tools[0].input_schema;
@@ -128,7 +131,7 @@ Thin archives get shorter honest answers, never invented depth.`);
   });
 });
 
-test("import overview adds an optional birthdate to the authoritative timeline", async (context) => {
+test("import overview ignores the removed birthdate experiment", async (context) => {
   const restore = installProviderMock(context, () => successfulProviderResponse(baseOverviewInput()));
   const response = createResponse();
 
@@ -139,10 +142,7 @@ test("import overview adds an optional birthdate to the authoritative timeline",
   assert.equal(response.statusCode, 200);
   const upstreamBody = JSON.parse(restore.requests[0].options.body);
   const prompt = upstreamBody.messages[0].content[0].text;
-  const birthdateLine = "PERSON'S DATE OF BIRTH: 1990-04-12. Ages at any note can therefore be computed exactly from that note's server-provided date.";
-  assert.equal(prompt.split("\n").filter((line) => line === birthdateLine).length, 1);
-  assert.ok(prompt.indexOf(birthdateLine) < prompt.indexOf("| Scope | Date or range | Note count |"));
-  assert.ok(prompt.indexOf(birthdateLine) < prompt.indexOf("NOTES — CHRONOLOGICAL, FULL TEXT"));
+  assert.doesNotMatch(prompt, /birthdate|date of birth|ages at any note/iu);
 });
 
 test("import overview adds month counts when a year has enough notes", async (context) => {
@@ -207,8 +207,8 @@ test("import overview substitutes exact line locators, computes dates, and remov
   assert.deepEqual(result.portraitCitations, [{ noteId: "n1", startLine: 1, endLine: 2 }]);
   assert.equal(result.read, "Another thought remains. This empty source said “second exact line”. The pattern remains.");
   assert.deepEqual(result.readCitations, [{ noteId: "n1", startLine: 2, endLine: 2 }]);
-  assert.equal(result.tender, "");
-  assert.deepEqual(result.tenderCitations, []);
+  assert.equal(Object.hasOwn(result, "tender"), false);
+  assert.equal(Object.hasOwn(result, "tenderCitations"), false);
   assert.equal(result.forgottenIdeas[0].whenWritten, "Mar 2025");
   assert.equal(result.forgottenIdeas[1].whenWritten, "");
   assert.deepEqual(result.questions, ["What do you still want to build?", "What keeps pulling you back?"]);
@@ -220,8 +220,8 @@ test("import overview substitutes exact line locators, computes dates, and remov
       { noteId: "", startLine: null, endLine: null, reason: "date_in_prose" },
       { noteId: "n99", startLine: 1, endLine: 1, citationIndex: 0, citationsAvailable: 3, reason: "note_not_found" },
       { noteId: "n1", startLine: 8, endLine: 9, citationIndex: 1, citationsAvailable: 3, reason: "invalid_locator" },
-      { noteId: null, startLine: null, endLine: null, citationIndex: 9, citationsAvailable: 0, reason: "invalid_locator" },
       { noteId: "n99", startLine: null, endLine: null, reason: "note_not_found" },
+      { noteId: null, startLine: null, endLine: null, citationIndex: 9, citationsAvailable: 0, reason: "invalid_locator" },
       { noteId: "", startLine: null, endLine: null, reason: "date_in_prose" }
     ]
   });
@@ -331,6 +331,28 @@ test("import overview preserves relative time and removes only calendar referenc
   });
 });
 
+test("import overview removes dependent follow-ons and trailing fragments after a sentence removal", async (context) => {
+  const providerInput = baseOverviewInput({
+    read: "A stable opening. In March 2024, you changed direction. I'd guess the former, since the notes split. You've always narrated hardship as material rather than just enduring it silently. A grounded ending. The final thought continues without"
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Safe source text", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.read, "A stable opening. A grounded ending.");
+  assert.deepEqual(result.verification, {
+    totalCitations: 1,
+    passed: 0,
+    failed: 1,
+    failures: [{ noteId: "", startLine: null, endLine: null, reason: "date_in_prose" }]
+  });
+});
+
 test("import overview removes corrupt words or their sentences across every text field", async (context) => {
   const providerInput = baseOverviewInput({
     portrait: "You're ambitious, and你're most honest when building. You keep going.",
@@ -355,18 +377,13 @@ test("import overview removes corrupt words or their sentences across every text
   const result = JSON.parse(response.body);
   assert.equal(result.portrait, "You keep going.");
   assert.equal(result.read, "You value careful work. This stays intact.");
-  assert.deepEqual(result.forgottenIdeas, [{
-    title: "",
-    whenWritten: "Aug 2026",
-    why: "You made a checklist. It still works.",
-    citations: []
-  }]);
+  assert.deepEqual(result.forgottenIdeas, []);
   assert.equal(result.tender, "You leave notes for your child. You pack lunch. You remember the small things.");
   assert.deepEqual(result.questions, ["What still matters?", "What would you build again?"]);
   assert.doesNotMatch(JSON.stringify(result), /你|小/u);
   assert.deepEqual(result.verification, {
-    totalCitations: 7,
-    passed: 1,
+    totalCitations: 6,
+    passed: 0,
     failed: 6,
     failures: Array.from({ length: 6 }, () => ({
       noteId: "",
@@ -408,6 +425,41 @@ test("import overview rejects corrupt extracted quotes before substitution", asy
   });
 });
 
+test("import overview rejects duplicate locators across response sections", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "You wrote {{cite:0}}. A portrait close remains.",
+    portraitCitations: [{ noteId: "n1", startLine: 1, endLine: 1 }],
+    read: "You attached the same evidence to {{cite:0}}. Another observation remains.",
+    readCitations: [{ noteId: "n1", startLine: 1, endLine: 1 }]
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "I chose the bigger outcome", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You wrote “I chose the bigger outcome”. A portrait close remains.");
+  assert.deepEqual(result.portraitCitations, [{ noteId: "n1", startLine: 1, endLine: 1 }]);
+  assert.equal(result.read, "Another observation remains.");
+  assert.deepEqual(result.readCitations, []);
+  assert.deepEqual(result.verification, {
+    totalCitations: 2,
+    passed: 1,
+    failed: 1,
+    failures: [{
+      noteId: "n1",
+      startLine: 1,
+      endLine: 1,
+      citationIndex: 0,
+      citationsAvailable: 1,
+      reason: "duplicate_locator"
+    }]
+  });
+});
+
 test("import overview allows relationship-based loss while removing health and named deceased prose", async (context) => {
   const providerInput = baseOverviewInput({
     portrait: "You see a psychologist regularly. Sertraline appears in your routine. You keep building.",
@@ -431,12 +483,11 @@ test("import overview allows relationship-based loss while removing health and n
   const result = JSON.parse(response.body);
   assert.equal(result.portrait, "You keep building.");
   assert.equal(result.read, "Your mother died and the loss changed your priorities. A death in the family still matters. Someone close to you is part of your grief. You keep showing up. Your wife supports your work. Ameer keeps his own name. Your child Zara appears in the plans. Your business partner Ravi appears in the launch notes. You married your partner deliberately. Your appetite for risk stayed constant.");
-  assert.equal(result.forgottenIdeas[0].title, "");
-  assert.equal(result.forgottenIdeas[0].whenWritten, "Aug 2026");
+  assert.deepEqual(result.forgottenIdeas, []);
   assert.deepEqual(result.questions, ["What do you still want?", "What keeps returning?"]);
   assert.deepEqual(result.verification, {
-    totalCitations: 8,
-    passed: 1,
+    totalCitations: 7,
+    passed: 0,
     failed: 7,
     failures: [
       { noteId: "", startLine: null, endLine: null, reason: "privacy_health" },
@@ -449,8 +500,49 @@ test("import overview allows relationship-based loss while removing health and n
     ]
   });
   assert.deepEqual(restore.loggedErrors, [
-    ["Import overview verification totalCitations=8 passed=1 failed=7"]
+    ["Import overview verification totalCitations=7 passed=0 failed=7"]
   ]);
+});
+
+test("import overview redacts context-confirmed partner names across portrait, tender, and quotes", async (context) => {
+  const providerInput = baseOverviewInput({
+    portrait: "Your wife Priya backed the move. Priya kept the details straight. You wrote {{cite:0}}. A portrait close remains.",
+    portraitCitations: [{ noteId: "n1", startLine: 1, endLine: 1 }],
+    read: "Priya also handled the handover.",
+    tender: "Priya packed lunch before the call. You kept the school note beside the plan."
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Priya backed the launch", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "Your wife backed the move. Your partner kept the details straight. A portrait close remains.");
+  assert.deepEqual(result.portraitCitations, []);
+  assert.equal(result.read, "Your partner also handled the handover.");
+  assert.equal(result.tender, "Your partner packed lunch before the call. You kept the school note beside the plan.");
+  assert.doesNotMatch(JSON.stringify(result), /Priya/u);
+  assert.deepEqual(result.verification, {
+    totalCitations: 5,
+    passed: 0,
+    failed: 5,
+    failures: Array.from({ length: 5 }, () => ({
+      noteId: "",
+      startLine: null,
+      endLine: null,
+      reason: "privacy_partner"
+    })).map((failure, index) => index === 2 ? {
+      noteId: "n1",
+      startLine: 1,
+      endLine: 1,
+      citationIndex: 0,
+      citationsAvailable: 1,
+      reason: "privacy_partner"
+    } : failure)
+  });
 });
 
 test("import overview screens questions and both forgotten-idea prose fields", async (context) => {
@@ -486,12 +578,6 @@ test("import overview screens questions and both forgotten-idea prose fields", a
   const result = JSON.parse(response.body);
   assert.deepEqual(result.forgottenIdeas, [
     {
-      title: "",
-      whenWritten: "Aug 2026",
-      why: "",
-      citations: []
-    },
-    {
       title: "A family care checklist.",
       whenWritten: "Aug 2026",
       why: "You rewrote your mother's eulogy four times.",
@@ -501,8 +587,8 @@ test("import overview screens questions and both forgotten-idea prose fields", a
   assert.deepEqual(result.questions, ["What did your wife make possible?"]);
   assert.doesNotMatch(JSON.stringify(result), /Sarah|psoriasis|Priya/u);
   assert.deepEqual(result.verification, {
-    totalCitations: 7,
-    passed: 2,
+    totalCitations: 6,
+    passed: 1,
     failed: 5,
     failures: [
       { noteId: "", startLine: null, endLine: null, reason: "privacy_deceased" },
@@ -511,6 +597,49 @@ test("import overview screens questions and both forgotten-idea prose fields", a
       { noteId: "", startLine: null, endLine: null, reason: "privacy_deceased" },
       { noteId: "", startLine: null, endLine: null, reason: "privacy_partner" }
     ]
+  });
+});
+
+test("import overview drops malformed forgotten ideas and empty screened sections", async (context) => {
+  const providerInput = baseOverviewInput({
+    read: "Therapy dominated the draft.",
+    forgottenIdeas: [
+      { title: "", sourceNoteId: "n1", why: "This could still work.", citations: [] },
+      { title: "An idea", sourceNoteId: "n1", why: "", citations: [] },
+      { title: "A therapy plan", sourceNoteId: "n1", why: "This could still work.", citations: [] },
+      { title: "A valid idea", sourceNoteId: "n1", why: "This is still worth revisiting.", citations: [] }
+    ],
+    tender: "Therapy was discussed. Care remains."
+  });
+  installProviderMock(context, () => successfulProviderResponse(providerInput));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Safe source text", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  assert.equal(response.statusCode, 200);
+  const result = JSON.parse(response.body);
+  assert.equal(Object.hasOwn(result, "read"), false);
+  assert.equal(Object.hasOwn(result, "readCitations"), false);
+  assert.equal(Object.hasOwn(result, "tender"), false);
+  assert.equal(Object.hasOwn(result, "tenderCitations"), false);
+  assert.deepEqual(result.forgottenIdeas, [{
+    title: "A valid idea",
+    whenWritten: "Aug 2026",
+    why: "This is still worth revisiting.",
+    citations: []
+  }]);
+  assert.deepEqual(result.verification, {
+    totalCitations: 4,
+    passed: 1,
+    failed: 3,
+    failures: Array.from({ length: 3 }, () => ({
+      noteId: "",
+      startLine: null,
+      endLine: null,
+      reason: "privacy_health"
+    }))
   });
 });
 
@@ -537,14 +666,14 @@ test("import overview keeps only complete tender sections with at least two sent
   const unterminatedResponse = createResponse();
   await handler(createRequest(notes), unterminatedResponse);
   const unterminatedResult = JSON.parse(unterminatedResponse.body);
-  assert.equal(unterminatedResult.tender, "");
-  assert.deepEqual(unterminatedResult.tenderCitations, []);
+  assert.equal(Object.hasOwn(unterminatedResult, "tender"), false);
+  assert.equal(Object.hasOwn(unterminatedResult, "tenderCitations"), false);
 
   const screenedResponse = createResponse();
   await handler(createRequest(notes), screenedResponse);
   const screenedResult = JSON.parse(screenedResponse.body);
-  assert.equal(screenedResult.tender, "");
-  assert.deepEqual(screenedResult.tenderCitations, []);
+  assert.equal(Object.hasOwn(screenedResult, "tender"), false);
+  assert.equal(Object.hasOwn(screenedResult, "tenderCitations"), false);
   assert.deepEqual(screenedResult.verification.failures, [
     { noteId: "", startLine: null, endLine: null, reason: "privacy_health" }
   ]);
@@ -705,9 +834,10 @@ test("import overview tolerates missing metadata, wrong optional types, and unex
   const result = JSON.parse(response.body);
   assert.equal(result.portrait, "Partial output");
   assert.deepEqual(result.portraitCitations, []);
-  assert.equal(result.read, "");
-  assert.deepEqual(result.readCitations, []);
-  assert.equal(result.tender, "");
+  assert.equal(Object.hasOwn(result, "read"), false);
+  assert.equal(Object.hasOwn(result, "readCitations"), false);
+  assert.equal(Object.hasOwn(result, "tender"), false);
+  assert.equal(Object.hasOwn(result, "tenderCitations"), false);
   assert.deepEqual(result.questions, ["One?", "Two?", "Three?"]);
   assert.deepEqual(result.forgottenIdeas, [{
     title: "An idea",
@@ -840,19 +970,6 @@ test("import overview rejects invalid createdAt values before calling the provid
   assert.deepEqual(JSON.parse(response.body), { error: { message: "Invalid notes array" } });
 });
 
-test("import overview rejects an invalid optional birthdate before calling the provider", async (context) => {
-  const restore = installProviderMock(context, () => successfulProviderResponse(baseOverviewInput()));
-  const response = createResponse();
-
-  await handler(createRequest([
-    note("one", "One", "Text", "2026-08-25T00:00:00.000Z")
-  ], { birthdate: "1990-02-30" }), response);
-
-  assert.equal(restore.requests.length, 0);
-  assert.equal(response.statusCode, 400);
-  assert.deepEqual(JSON.parse(response.body), { error: { message: "Invalid birthdate" } });
-});
-
 function baseOverviewInput(overrides = {}) {
   return {
     portrait: "Portrait",
@@ -860,7 +977,7 @@ function baseOverviewInput(overrides = {}) {
     read: "Read",
     readCitations: [],
     forgottenIdeas: [],
-    tender: "Tender",
+    tender: "You notice care. You keep the small details.",
     tenderCitations: [],
     questions: ["What do you want?", "What keeps returning?", "What changed you?"],
     ...overrides

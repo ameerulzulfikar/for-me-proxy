@@ -16,7 +16,7 @@ async function main() {
   const startedAt = Date.now();
 
   try {
-    const { folderPath, limit, birthdate, labInstructions } = await parseArguments(process.argv.slice(2));
+    const { folderPath, limit, labInstructions } = await parseArguments(process.argv.slice(2));
     const notes = await loadNotes(folderPath);
     notes.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
@@ -32,10 +32,6 @@ async function main() {
     if (limit !== undefined) {
       console.log(`Most-recent limit: ${limit}`);
     }
-    if (birthdate !== undefined) {
-      console.log(`Birthdate: ${birthdate}`);
-    }
-
     const headers = { "Content-Type": "application/json" };
     if (labMode) {
       const labKey = process.env.LAB_KEY;
@@ -48,7 +44,9 @@ async function main() {
     const response = await fetch(labMode ? LAB_ENDPOINT : OVERVIEW_ENDPOINT, {
       method: "POST",
       headers,
-      body: JSON.stringify(buildRequestBody(selectedNotes, labInstructions, birthdate)),
+      body: JSON.stringify(labMode
+        ? { notes: selectedNotes, instructions: labInstructions }
+        : { notes: selectedNotes }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
     });
 
@@ -75,15 +73,14 @@ async function main() {
   } catch (error) {
     printSection("ERROR");
     console.error(error instanceof Error ? error.message : String(error));
-    console.error('Usage: node test/overview-lab.mjs <folder> [--limit N] [--birthdate YYYY-MM-DD] [--lab "instructions text or @file.txt"]');
+    console.error('Usage: node test/overview-lab.mjs <folder> [--limit N] [--lab "instructions text or @file.txt"]');
     process.exitCode = 1;
   }
 }
 
-export async function parseArguments(args) {
+async function parseArguments(args) {
   let folderArgument;
   let limit;
-  let birthdate;
   let labArgument;
 
   for (let index = 0; index < args.length; index += 1) {
@@ -111,19 +108,6 @@ export async function parseArguments(args) {
       continue;
     }
 
-    if (argument === "--birthdate") {
-      if (birthdate !== undefined) {
-        throw new Error("--birthdate may only be provided once");
-      }
-      const value = args[index + 1];
-      if (!isIsoDate(value)) {
-        throw new Error("--birthdate must be a valid date in YYYY-MM-DD format");
-      }
-      birthdate = value;
-      index += 1;
-      continue;
-    }
-
     if (argument.startsWith("--")) {
       throw new Error(`Unknown option: ${argument}`);
     }
@@ -146,27 +130,8 @@ export async function parseArguments(args) {
   return {
     folderPath: resolve(expandedFolder),
     limit,
-    birthdate,
     labInstructions: await loadLabInstructions(labArgument)
   };
-}
-
-export function buildRequestBody(notes, labInstructions, birthdate) {
-  const body = labInstructions === undefined
-    ? { notes }
-    : { notes, instructions: labInstructions };
-  if (birthdate !== undefined) {
-    body.birthdate = birthdate;
-  }
-  return body;
-}
-
-function isIsoDate(value) {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
-    return false;
-  }
-  const timestamp = Date.parse(`${value}T00:00:00.000Z`);
-  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value;
 }
 
 async function loadLabInstructions(labArgument) {
