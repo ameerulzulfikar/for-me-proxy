@@ -235,15 +235,12 @@ function printVerificationSummary(responseBody) {
     return;
   }
 
-  const { totalCitations, passed, failed, failures } = responseBody.verification;
+  const { totalChecks, passed, failed, failures } = responseBody.verification;
   printSection("VERIFICATION");
-  console.log(`Total citations: ${totalCitations} | Passed: ${passed} | Failed: ${failed}`);
+  console.log(`Total checks: ${totalChecks} | Passed: ${passed} | Failed: ${failed}`);
 
   for (const failure of Array.isArray(failures) ? failures : []) {
-    const locator = Number.isInteger(failure.startLine) && Number.isInteger(failure.endLine)
-      ? `L${failure.startLine}-L${failure.endLine}`
-      : "(no lines)";
-    console.log(`${failure.noteId || "(no noteId)"} | ${locator} | ${failure.reason}`);
+    console.log(`${failure.noteId || "(no noteId)"} | ${failure.reason}`);
   }
 }
 
