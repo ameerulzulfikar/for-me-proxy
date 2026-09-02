@@ -23,13 +23,13 @@ test("import overview sends the simplified schema, timeline, and unnumbered note
   assert.match(upstreamBody.system, /Be generous and be honest/u);
   assert.match(upstreamBody.system, /at least two things they probably haven't put into words about themselves/u);
   assert.match(upstreamBody.system, /Where you're unsure, say so plainly/u);
-  assert.match(upstreamBody.system, /Don't write calendar years or months — describe time relatively\./u);
   assert.match(upstreamBody.system, /Don't work out someone's age unless the notes state it\./u);
+  assert.match(upstreamBody.system, /Never mention note IDs or reference the notes by their labels — the reader doesn't know what n412 means\./u);
   assert.match(upstreamBody.system, /Don't mention health conditions, treatments, therapy or diagnoses/u);
   assert.match(upstreamBody.system, /Don't name people who have died or a partner by name — 'your wife' is fine\./u);
   assert.match(upstreamBody.system, /Don't quote at length; if you refer to something they wrote, paraphrase it\./u);
   assert.match(upstreamBody.system, /Don't tell them what to do\.$/u);
-  assert.doesNotMatch(upstreamBody.system, /\{\{cite|locator|startLine|endLine|4-5|Exactly three/u);
+  assert.doesNotMatch(upstreamBody.system, /Don't write calendar years or months|\{\{cite|locator|startLine|endLine|4-5/u);
 
   const tool = upstreamBody.tools[0];
   assert.match(tool.description, /server-computed timeline index/u);
@@ -42,8 +42,9 @@ test("import overview sends the simplified schema, timeline, and unnumbered note
   assert.deepEqual(schema.properties.forgottenIdeas.items.required, ["title", "sourceNoteId", "why"]);
   assert.equal(schema.properties.forgottenIdeas.minItems, undefined);
   assert.equal(schema.properties.forgottenIdeas.maxItems, undefined);
-  assert.equal(schema.properties.questions.minItems, undefined);
-  assert.equal(schema.properties.questions.maxItems, undefined);
+  assert.equal(schema.properties.questions.minItems, 3);
+  assert.equal(schema.properties.questions.maxItems, 3);
+  assert.match(schema.properties.questions.description, /^Exactly three questions/u);
   for (const field of Object.values(schema.properties)) {
     assert.equal(typeof field.description, "string");
     assert.ok(field.description.length > 0);
@@ -147,6 +148,54 @@ test("import overview leaves calendar dates and ordinary prose untouched", async
   assert.match(result.tender, /May 2025/u);
   assert.deepEqual(result.questions, ["What changed in June 2023?"]);
   assert.deepEqual(result.verification, { totalChecks: 1, passed: 1, failed: 0, failures: [] });
+});
+
+test("import overview removes note-ID parentheticals from every text field and returns three screened questions", async (context) => {
+  installProviderMock(context, () => successfulProviderResponse({
+    portrait: "You keep returning to the same problem (note n973, n1278, n1687). You still act quickly.",
+    read: "The pattern became clearer over time (note n587). It stayed practical.",
+    forgottenIdeas: [{
+      title: "The pocket brief (n12)",
+      sourceNoteId: "n1",
+      why: "It connects several loose ideas (notes n12 and n18)."
+    }],
+    tender: "You kept the school note beside the launch plan (note n3). You packed lunch before the call.",
+    questions: [
+      "How did therapy change the work?",
+      "What made the idea stick (note n8)?",
+      "What stayed constant (n12, n14)?",
+      "What are you still moving toward?",
+      "What would you revisit?",
+      "What surprised you?"
+    ]
+  }));
+  const response = createResponse();
+
+  await handler(createRequest([
+    note("one", "One", "Source", "2026-08-25T00:00:00.000Z")
+  ]), response);
+
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You keep returning to the same problem. You still act quickly.");
+  assert.equal(result.read, "The pattern became clearer over time. It stayed practical.");
+  assert.deepEqual(result.forgottenIdeas, [{
+    title: "The pocket brief",
+    whenWritten: "Aug 2026",
+    why: "It connects several loose ideas."
+  }]);
+  assert.equal(result.tender, "You kept the school note beside the launch plan. You packed lunch before the call.");
+  assert.deepEqual(result.questions, [
+    "What made the idea stick?",
+    "What stayed constant?",
+    "What are you still moving toward?"
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /\([^)]*\bn\d+\b[^)]*\)/iu);
+  assert.deepEqual(result.verification, {
+    totalChecks: 2,
+    passed: 1,
+    failed: 1,
+    failures: [{ reason: "privacy_health" }]
+  });
 });
 
 test("import overview keeps relationship-based loss while removing private health and deceased names", async (context) => {
@@ -365,7 +414,7 @@ test("import overview tolerates wrong optional types and unexpected fields", asy
   assert.equal(result.portrait, "Partial output");
   assert.equal(Object.hasOwn(result, "read"), false);
   assert.equal(Object.hasOwn(result, "tender"), false);
-  assert.deepEqual(result.questions, ["One?", "Two?", "Three?", "Four?"]);
+  assert.deepEqual(result.questions, ["One?", "Two?", "Three?"]);
   assert.deepEqual(result.forgottenIdeas, [{ title: "An idea", whenWritten: "", why: "It may matter" }]);
   assert.deepEqual(result.verification, {
     totalChecks: 1,

@@ -99,7 +99,7 @@ Anything you claim should rest on something specific — a line they wrote, a pr
 Where you're unsure, say so plainly. 'I might be reading too much into this.' 'You'd know better than I would.' That honesty makes you trustworthy, not weak.
 
 WHAT NOT TO DO
-Don't write calendar years or months — describe time relatively. Don't work out someone's age unless the notes state it. Don't mention health conditions, treatments, therapy or diagnoses, and never suggest someone has one. Don't name people who have died or a partner by name — 'your wife' is fine. Don't use personality types or psychological frameworks. Don't quote at length; if you refer to something they wrote, paraphrase it. Don't tell them what to do.
+Don't work out someone's age unless the notes state it. Never mention note IDs or reference the notes by their labels — the reader doesn't know what n412 means. Don't mention health conditions, treatments, therapy or diagnoses, and never suggest someone has one. Don't name people who have died or a partner by name — 'your wife' is fine. Don't use personality types or psychological frameworks. Don't quote at length; if you refer to something they wrote, paraphrase it. Don't tell them what to do.
 `.trim();
 
 const overviewTool = {
@@ -148,7 +148,9 @@ const overviewTool = {
       },
       questions: {
         type: "array",
-        description: "Questions you'd genuinely want to ask this person that only their own archive could answer.",
+        minItems: 3,
+        maxItems: 3,
+        description: "Exactly three questions you'd genuinely want to ask this person that only their own archive could answer.",
         items: {
           type: "string",
           description: "One genuine second-person question."
@@ -594,7 +596,8 @@ function verifyOverview(overview, notes) {
   const tender = hasCompleteTenderSection(verifiedTender) ? verifiedTender : "";
   const questions = overview.questions
     .map((question) => verifyQuestion(question, verification, verificationContext))
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, 3);
 
   console.error(`Import overview verification totalChecks=${verification.totalChecks} passed=${verification.passed} failed=${verification.failed}`);
 
@@ -609,8 +612,17 @@ function verifyOverview(overview, notes) {
 }
 
 function verifyProse(text, verification, verificationContext) {
-  const corruptionScreened = screenProseForCorruption(text, verification);
+  const withoutNoteReferences = removeNoteIdParentheticals(text);
+  const corruptionScreened = screenProseForCorruption(withoutNoteReferences, verification);
   return screenProseForPrivacy(corruptionScreened, verification, verificationContext.partnerNames);
+}
+
+function removeNoteIdParentheticals(text) {
+  return text
+    .replace(/\([^()]*\bn\d+\b[^()]*\)/giu, "")
+    .replace(/[ \t]{2,}/gu, " ")
+    .replace(/\s+([,.;:!?])/gu, "$1")
+    .trim();
 }
 
 function verifyQuestion(question, verification, verificationContext) {
