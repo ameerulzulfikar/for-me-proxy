@@ -2,7 +2,7 @@ import { LIMITS, isPlainObject, readJsonBody, sendJson, totalStringLength } from
 import { createEvaluationRecorder, hasValidLabKey } from "./_evaluation.js";
 
 // Bump manually when changing the prompt. The lab snapshots the deployed text.
-export const OVERVIEW_PROMPT_VERSION = "overview-v1";
+export const OVERVIEW_PROMPT_VERSION = "overview-v2";
 const MODEL = "claude-sonnet-5";
 const CACHE_CONTROL = Object.freeze({ type: "ephemeral", ttl: "1h" });
 
@@ -11,6 +11,13 @@ const MAX_COMBINED_NOTE_TEXT = 2_100_000; // Approximately 700,000 tokens at 3 c
 const MONTH_BREAKDOWN_MIN_NOTES = 12;
 const MAX_OUTPUT_TOKENS = 32_000;
 const PROVIDER_TIMEOUT_MS = 270_000;
+const SELF_HARM_PRIVACY_PATTERN = new RegExp([
+  String.raw`\b(?:suicid(?:es?|al(?:ity)?)|self[\s\p{Dash_Punctuation}]*(?:harm(?:s|ed|ing)?|injur(?:y|ies|ious))`,
+  String.raw`|(?:mental[\s\p{Dash_Punctuation}]+health|psychiatric|psychological)[\s\p{Dash_Punctuation}]+(?:cris(?:is|es)|emergenc(?:y|ies))`,
+  String.raw`|kill(?:s|ed|ing)?\s+(?:myself|yourself|himself|herself|themselves)`,
+  String.raw`|(?:take|takes|taking|took|taken)\s+(?:my|your|his|her|their)\s+own\s+life`,
+  String.raw`|(?:end|ends|ending|ended)\s+(?:my|your|his|her|their)\s+(?:own\s+)?life)\b`
+].join(""), "iu");
 const HEALTH_PRIVACY_PATTERN = buildKeywordPattern([
   "psychologist", "psychologists", "psychiatrist", "psychiatrists", "psychotherapy",
   "therapy", "therapist", "therapists", "counselling", "counseling", "counsellor",
@@ -100,7 +107,11 @@ Be generous and be honest — both, not one softened by the other. Generous mean
 
 Use their own stated reasons for what they did. Where motive is genuinely unclear, say so, or hold both readings. Never impose a familiar story shape on a life just because it's a shape you recognise. When you describe what someone is working toward, say what they're moving toward, not only what they're escaping. Most people are doing both, and reading only the escape makes them smaller than they are.
 
-Anything you claim should rest on something specific — a line they wrote, a project they named, a number they tracked, a thing they did repeatedly. An observation with evidence beats three without. And somewhere in here, tell them at least two things they probably haven't put into words about themselves: a pattern only visible across years, a contradiction between two parts of their life, something that stayed constant while they thought they were changing.
+Anything you claim should rest on something specific — a line they wrote, a project they named, a number they tracked, a thing they did repeatedly. An observation with evidence beats three without.
+
+Say what the notes establish, at the level they establish it. A plan supports 'you considered this', not 'you did this'. A draft supports 'you wrote', not 'you sent'. An idea written down is an idea, not an event.
+
+Several notes about one thing are still one thing. Don't infer a sequence of events from documents that may describe the same event, and don't conclude that something must have happened earlier because of how things are now. If you can't establish a count, don't state one.
 
 Where you're unsure, say so plainly. 'I might be reading too much into this.' 'You'd know better than I would.' That honesty makes you trustworthy, not weak.
 
@@ -118,7 +129,7 @@ const overviewTool = {
     properties: {
       portrait: {
         type: "string",
-        description: "Who this person is, said plainly, the way you'd describe a friend to someone who hasn't met them. Place them concretely in the world, then get to their character and the central tension they seem to be living with."
+        description: "Who this person is, said plainly, the way you'd describe a friend to someone who hasn't met them. Place them concretely in the world, then get to their character."
       },
       read: {
         type: "string",
@@ -150,7 +161,7 @@ const overviewTool = {
       },
       tender: {
         type: "string",
-        description: "Where the notes hold emotional weight — grief, love, worry, or care — say what you noticed in what they did. Include ordinary tenderness and domestic details, not only loss."
+        description: "Where the notes hold emotional weight — grief, love, worry, or care — say what you noticed in what they did. Include it only where genuinely present and worth noting, including ordinary tenderness and domestic details; otherwise return an empty string."
       },
       questions: {
         type: "array",
@@ -817,6 +828,9 @@ function findAllSentenceRanges(text) {
 }
 
 function detectRemovalPrivacyReason(value) {
+  if (SELF_HARM_PRIVACY_PATTERN.test(value)) {
+    return "privacy_selfharm";
+  }
   if (HEALTH_PRIVACY_PATTERN.test(value)) {
     return "privacy_health";
   }

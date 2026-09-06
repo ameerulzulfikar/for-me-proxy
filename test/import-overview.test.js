@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import handler, { OVERVIEW_PROMPT_VERSION } from "../api/import-overview.js";
@@ -24,7 +25,9 @@ test("import overview sends the simplified schema, timeline, and unnumbered note
   assert.match(upstreamBody.system[0].text, /^Someone has just handed you everything they've written down for years/u);
   assert.match(upstreamBody.system[0].text, /Warm, plain, direct\. Short sentences\./u);
   assert.match(upstreamBody.system[0].text, /Be generous and be honest/u);
-  assert.match(upstreamBody.system[0].text, /at least two things they probably haven't put into words about themselves/u);
+  assert.doesNotMatch(upstreamBody.system[0].text, /at least two things they probably haven't put into words about themselves/u);
+  assert.ok(upstreamBody.system[0].text.includes("Say what the notes establish, at the level they establish it. A plan supports 'you considered this', not 'you did this'. A draft supports 'you wrote', not 'you sent'. An idea written down is an idea, not an event."));
+  assert.ok(upstreamBody.system[0].text.includes("Several notes about one thing are still one thing. Don't infer a sequence of events from documents that may describe the same event, and don't conclude that something must have happened earlier because of how things are now. If you can't establish a count, don't state one."));
   assert.match(upstreamBody.system[0].text, /Where you're unsure, say so plainly/u);
   assert.match(upstreamBody.system[0].text, /Don't work out someone's age unless the notes state it\./u);
   assert.match(upstreamBody.system[0].text, /Never mention note IDs or reference the notes by their labels — the reader doesn't know what n412 means\./u);
@@ -48,6 +51,9 @@ test("import overview sends the simplified schema, timeline, and unnumbered note
   assert.equal(schema.properties.questions.minItems, 3);
   assert.equal(schema.properties.questions.maxItems, 3);
   assert.match(schema.properties.questions.description, /^Exactly three questions/u);
+  assert.doesNotMatch(schema.properties.portrait.description, /central tension/iu);
+  assert.match(schema.properties.tender.description, /only where genuinely present and worth noting/u);
+  assert.match(schema.properties.tender.description, /otherwise return an empty string/u);
   for (const field of Object.values(schema.properties)) {
     assert.equal(typeof field.description, "string");
     assert.ok(field.description.length > 0);
@@ -66,6 +72,34 @@ test("import overview sends the simplified schema, timeline, and unnumbered note
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
   assert.deepEqual(Object.keys(result), ["portrait", "read", "forgottenIdeas", "tender", "questions", "verification", "usage"]);
+  assert.deepEqual(result.verification, { totalChecks: 0, passed: 0, failed: 0, failures: [] });
+});
+
+test("Condition B keeps the baseline prompt except for the requested quota removal and two rules", async (context) => {
+  const mock = installProviderMock(context, () => successfulProviderResponse(baseOverviewInput()));
+  await handler(createRequest([]), createResponse());
+  const prompt = JSON.parse(mock.requests[0].options.body).system[0].text;
+  const backlog = JSON.parse(await readFile(new URL("./overview-prompt-backlog.json", import.meta.url), "utf8"));
+  const baseline = backlog.find((entry) => entry.version === "overview-v1");
+  const conditionB = backlog.find((entry) => entry.version === "overview-v2");
+  const removedQuota = " And somewhere in here, tell them at least two things they probably haven't put into words about themselves: a pattern only visible across years, a contradiction between two parts of their life, something that stayed constant while they thought they were changing.";
+  const certainty = "Say what the notes establish, at the level they establish it. A plan supports 'you considered this', not 'you did this'. A draft supports 'you wrote', not 'you sent'. An idea written down is an idea, not an event.";
+  const identity = "Several notes about one thing are still one thing. Don't infer a sequence of events from documents that may describe the same event, and don't conclude that something must have happened earlier because of how things are now. If you can't establish a count, don't state one.";
+  assert.equal(prompt, baseline.systemPrompt.replace(removedQuota, `\n\n${certainty}\n\n${identity}`));
+  assert.equal(OVERVIEW_PROMPT_VERSION, "overview-v2");
+  assert.equal(conditionB.systemPrompt, prompt);
+  assert.equal(conditionB.description, "Condition B: removed editorial pressure (central tension, insight quota, compulsory tenderness); added certainty and event-identity rules; strengthened privacy screening for self-harm content.");
+});
+
+test("optional tenderness can be empty without changing the schema or other fields", async (context) => {
+  installProviderMock(context, () => successfulProviderResponse(baseOverviewInput({ tender: "" })));
+  const response = createResponse();
+  await handler(createRequest([]), response);
+  const result = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.equal(Object.hasOwn(result, "tender"), false);
+  assert.equal(result.portrait, "Portrait");
+  assert.equal(result.questions.length, 3);
   assert.deepEqual(result.verification, { totalChecks: 0, passed: 0, failed: 0, failures: [] });
 });
 
@@ -341,6 +375,63 @@ test("import overview privacy-screens every response string and redacts partner 
     "privacy_partner",
     "privacy_deceased"
   ]);
+});
+
+test("self-harm privacy removes whole sentences from every field, including questions and idea titles/why", async (context) => {
+  installProviderMock(context, () => successfulProviderResponse({
+    portrait: "You keep useful lists. A suicide/recovery note appeared at seventeen. That shaped the work. You build practical tools.",
+    read: "You kept plans. You discussed therapy after a suicide attempt. You kept revising.",
+    forgottenIdeas: [
+      { title: "Suicide recovery", sourceNoteId: "n1", why: "You kept the plan." },
+      { title: "A draft", sourceNoteId: "n1", why: "A mental health crisis shaped the draft." },
+      { title: "A useful idea", sourceNoteId: "n1", why: "You saved a sketch. Self-harm shaped the idea. You kept revising." }
+    ],
+    tender: "You packed lunch. A mental-health crisis changed the routine. You kept the school note.",
+    questions: ["How did suicidal thoughts change the work?", "What followed self-harm?", "What would you build next?"]
+  }));
+  const response = createResponse();
+  await handler(createRequest([note("one", "One", "Source", "2026-08-25T00:00:00.000Z")]), response);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, "You keep useful lists. You build practical tools.");
+  assert.equal(result.read, "You kept plans. You kept revising.");
+  assert.equal(result.tender, "You packed lunch. You kept the school note.");
+  assert.deepEqual(result.forgottenIdeas, [{ title: "A useful idea", whenWritten: "Aug 2026", why: "You saved a sketch. You kept revising." }]);
+  assert.deepEqual(result.questions, ["What would you build next?"]);
+  assert.deepEqual(result.verification, {
+    totalChecks: 9,
+    passed: 1,
+    failed: 8,
+    failures: Array.from({ length: 8 }, () => ({ reason: "privacy_selfharm" }))
+  });
+});
+
+test("self-harm screening handles case, hyphen variants, crisis terms and explicit suicide euphemisms", async (context) => {
+  let phrase;
+  installProviderMock(context, () => successfulProviderResponse(baseOverviewInput({
+    portrait: `You kept a plan. You wrote about ${phrase}. You kept revising.`
+  })));
+  for (phrase of [
+    "SUICIDE/recovery", "suicides", "suicidal thoughts", "suicidality", "self-harm", "self harm", "selfharm",
+    "self‑harm", "self–harming", "self-injury", "self injurious behaviour", "mental health crisis",
+    "mental-health crises", "mental‑health crisis", "psychiatric emergency", "psychological crises",
+    "killing yourself", "ending your life", "taking your own life"
+  ]) {
+    const response = createResponse();
+    await handler(createRequest([]), response);
+    const result = JSON.parse(response.body);
+    assert.equal(result.portrait, "You kept a plan. You kept revising.", phrase);
+    assert.deepEqual(result.verification.failures, [{ reason: "privacy_selfharm" }], phrase);
+  }
+});
+
+test("self-harm screening leaves ordinary recovery, self-help and business-crisis language alone", async (context) => {
+  const portrait = "You wrote a self-help outline. Your business had a crisis. You made a recovery plan for the launch. You take your life seriously.";
+  installProviderMock(context, () => successfulProviderResponse(baseOverviewInput({ portrait })));
+  const response = createResponse();
+  await handler(createRequest([]), response);
+  const result = JSON.parse(response.body);
+  assert.equal(result.portrait, portrait);
+  assert.deepEqual(result.verification.failures, []);
 });
 
 test("import overview removes corrupt words or sentences across every text field", async (context) => {
