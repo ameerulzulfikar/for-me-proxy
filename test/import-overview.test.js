@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import handler from "../api/import-overview.js";
+import handler, { OVERVIEW_PROMPT_VERSION } from "../api/import-overview.js";
 
 test("import overview sends the simplified schema, timeline, and unnumbered note text", async (context) => {
   const restore = installProviderMock(context, () => successfulProviderResponse(baseOverviewInput()));
@@ -17,19 +17,22 @@ test("import overview sends the simplified schema, timeline, and unnumbered note
   assert.equal(restore.requests.length, 1);
   assert.equal(upstreamBody.model, "claude-sonnet-5");
   assert.equal(upstreamBody.max_tokens, 32000);
+  assert.equal(upstreamBody.system.length, 1);
+  assert.deepEqual(upstreamBody.system[0].cache_control, { type: "ephemeral", ttl: "1h" });
+  assert.deepEqual(upstreamBody.messages[0].content[0].cache_control, { type: "ephemeral", ttl: "1h" });
   assert.ok(restore.requests[0].options.signal instanceof AbortSignal);
-  assert.match(upstreamBody.system, /^Someone has just handed you everything they've written down for years/u);
-  assert.match(upstreamBody.system, /Warm, plain, direct\. Short sentences\./u);
-  assert.match(upstreamBody.system, /Be generous and be honest/u);
-  assert.match(upstreamBody.system, /at least two things they probably haven't put into words about themselves/u);
-  assert.match(upstreamBody.system, /Where you're unsure, say so plainly/u);
-  assert.match(upstreamBody.system, /Don't work out someone's age unless the notes state it\./u);
-  assert.match(upstreamBody.system, /Never mention note IDs or reference the notes by their labels — the reader doesn't know what n412 means\./u);
-  assert.match(upstreamBody.system, /Don't mention health conditions, treatments, therapy or diagnoses/u);
-  assert.match(upstreamBody.system, /Don't name people who have died or a partner by name — 'your wife' is fine\./u);
-  assert.match(upstreamBody.system, /Don't quote at length; if you refer to something they wrote, paraphrase it\./u);
-  assert.match(upstreamBody.system, /Don't tell them what to do\.$/u);
-  assert.doesNotMatch(upstreamBody.system, /Don't write calendar years or months|\{\{cite|locator|startLine|endLine|4-5/u);
+  assert.match(upstreamBody.system[0].text, /^Someone has just handed you everything they've written down for years/u);
+  assert.match(upstreamBody.system[0].text, /Warm, plain, direct\. Short sentences\./u);
+  assert.match(upstreamBody.system[0].text, /Be generous and be honest/u);
+  assert.match(upstreamBody.system[0].text, /at least two things they probably haven't put into words about themselves/u);
+  assert.match(upstreamBody.system[0].text, /Where you're unsure, say so plainly/u);
+  assert.match(upstreamBody.system[0].text, /Don't work out someone's age unless the notes state it\./u);
+  assert.match(upstreamBody.system[0].text, /Never mention note IDs or reference the notes by their labels — the reader doesn't know what n412 means\./u);
+  assert.match(upstreamBody.system[0].text, /Don't mention health conditions, treatments, therapy or diagnoses/u);
+  assert.match(upstreamBody.system[0].text, /Don't name people who have died or a partner by name — 'your wife' is fine\./u);
+  assert.match(upstreamBody.system[0].text, /Don't quote at length; if you refer to something they wrote, paraphrase it\./u);
+  assert.match(upstreamBody.system[0].text, /Don't tell them what to do\.$/u);
+  assert.doesNotMatch(upstreamBody.system[0].text, /Don't write calendar years or months|\{\{cite|locator|startLine|endLine|4-5/u);
 
   const tool = upstreamBody.tools[0];
   assert.match(tool.description, /server-computed timeline index/u);
@@ -62,8 +65,83 @@ test("import overview sends the simplified schema, timeline, and unnumbered note
 
   assert.equal(response.statusCode, 200);
   const result = JSON.parse(response.body);
-  assert.deepEqual(Object.keys(result), ["portrait", "read", "forgottenIdeas", "tender", "questions", "verification"]);
+  assert.deepEqual(Object.keys(result), ["portrait", "read", "forgottenIdeas", "tender", "questions", "verification", "usage"]);
   assert.deepEqual(result.verification, { totalChecks: 0, passed: 0, failed: 0, failures: [] });
+});
+
+test("import overview returns real cache usage and authenticated raw/final snapshots without changing the provider request", async (context) => {
+  const previousLabKey = process.env.LAB_KEY;
+  process.env.LAB_KEY = "evaluation-test-key";
+  context.after(() => restoreEnvironment("LAB_KEY", previousLabKey));
+  const usage = { input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 100000, output_tokens: 3000 };
+  const raw = {
+    model: "claude-sonnet-5",
+    content: [{ type: "tool_use", name: "submit_import_overview", input: baseOverviewInput({ portrait: "You keep practical lists. Therapy shaped the work. You build useful things." }) }],
+    stop_reason: "tool_use",
+    usage
+  };
+  const writeUsage = { input_tokens: 0, cache_creation_input_tokens: 100000, cache_read_input_tokens: 0, output_tokens: 3000 };
+  let providerCalls = 0;
+  const mock = installProviderMock(context, () => new Response(JSON.stringify({ ...raw, usage: providerCalls++ === 0 ? writeUsage : usage })));
+  const notes = [note("one", "One", "Source", "2026-08-25T00:00:00.000Z")];
+  const appResponse = createResponse();
+  await handler(createRequest(notes), appResponse);
+  const appResult = JSON.parse(appResponse.body);
+  assert.deepEqual(appResult.usage, writeUsage);
+  assert.equal(appResult.evaluation, undefined);
+  assert.doesNotMatch(JSON.stringify(appResult), /Therapy/u);
+
+  const request = createRequest(notes, { includeEvaluation: true, runTimestamp: "varies", promptVersion: "not-used" });
+  request.headers = new Headers({ "x-lab-key": "evaluation-test-key" });
+  const response = createResponse();
+  await handler(request, response);
+  const result = JSON.parse(response.body);
+  assert.deepEqual(result.evaluation.rawModelResponse, raw);
+  assert.equal(result.evaluation.promptVersion, OVERVIEW_PROMPT_VERSION);
+  assert.equal(result.evaluation.systemPrompt, JSON.parse(mock.requests[1].options.body).system[0].text);
+  assert.deepEqual(result.evaluation.usage, usage);
+  assert.equal(result.evaluation.costEstimate.totalUsd, 0.05);
+  assert.deepEqual(result.evaluation.corpus, { receivedNoteCount: 1, usedNoteCount: 1 });
+  assert.equal(response.headers["Cache-Control"], "no-store");
+  assert.equal(result.portrait, appResult.portrait);
+  assert.deepEqual(JSON.parse(mock.requests[0].options.body), JSON.parse(mock.requests[1].options.body));
+});
+
+test("import overview refuses unauthenticated raw snapshots before contacting the provider", async (context) => {
+  const previousLabKey = process.env.LAB_KEY;
+  process.env.LAB_KEY = "expected-key";
+  context.after(() => restoreEnvironment("LAB_KEY", previousLabKey));
+  const mock = installProviderMock(context, () => successfulProviderResponse(baseOverviewInput()));
+  for (const key of [undefined, "wrong-key", "expected-keX"]) {
+    const request = createRequest([], { includeEvaluation: true });
+    request.headers = key ? { "x-lab-key": key } : {};
+    const response = createResponse();
+    await handler(request, response);
+    assert.equal(response.statusCode, 401);
+    assert.deepEqual(JSON.parse(response.body), { error: { message: "Unauthorized" } });
+  }
+  delete process.env.LAB_KEY;
+  const response = createResponse();
+  await handler(createRequest([], { includeEvaluation: true }), response);
+  assert.equal(response.statusCode, 401);
+  assert.equal(mock.requests.length, 0);
+});
+
+test("evaluation records keep usage and raw output even when the provider exhausts max_tokens", async (context) => {
+  const previousLabKey = process.env.LAB_KEY;
+  process.env.LAB_KEY = "evaluation-test-key";
+  context.after(() => restoreEnvironment("LAB_KEY", previousLabKey));
+  const usage = { input_tokens: 0, cache_creation_input_tokens: 100000, cache_read_input_tokens: 0, output_tokens: 32000 };
+  installProviderMock(context, () => providerResponse({ content: [{ type: "text", text: "Unfinished output" }], stopReason: "max_tokens", usage }));
+  const request = createRequest([], { includeEvaluation: true });
+  request.headers = { "x-lab-key": "evaluation-test-key" };
+  const response = createResponse();
+  await handler(request, response);
+  const result = JSON.parse(response.body);
+  assert.equal(response.statusCode, 502);
+  assert.equal(result.evaluation.rawModelResponse.content[0].text, "Unfinished output");
+  assert.deepEqual(result.evaluation.usage, usage);
+  assert.equal(result.evaluation.costEstimate.totalUsd, 0.72);
 });
 
 test("import overview ignores the removed birthdate experiment", async (context) => {

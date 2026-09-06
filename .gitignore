@@ -1,0 +1,5 @@
+# Private archives, filename manifests, and unscreened evaluation responses.
+test/overview-runs/
+test/overview-subset*.json
+test/overview-prompt-backlog.json.lock
+test/overview-prompt-backlog.json.*.tmp

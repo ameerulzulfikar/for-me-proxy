@@ -1,6 +1,8 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import { LIMITS, isPlainObject, readJsonBody, sendJson, sendText, totalStringLength } from "./_validation.js";
+import { createEvaluationRecorder, hasValidLabKey } from "./_evaluation.js";
+import { OVERVIEW_PROMPT_VERSION } from "./import-overview.js";
 
 const MAX_NOTES = 3_000;
 const MAX_COMBINED_NOTE_TEXT = 2_100_000; // Approximately 700,000 tokens at 3 characters per token.
@@ -64,6 +66,18 @@ export default async function handler(request, response) {
   const boundedNotes = totalStringLength(notes, "text") > MAX_COMBINED_NOTE_TEXT
     ? dropOldestNotes(notes, MAX_COMBINED_NOTE_TEXT)
     : notes;
+  const systemPrompt = `${integrityRules}\n\n${body.instructions}`;
+  const recorder = createEvaluationRecorder({
+    promptVersion: `${OVERVIEW_PROMPT_VERSION}/lab-${createHash("sha256").update(systemPrompt).digest("hex").slice(0, 12)}`,
+    systemPrompt,
+    model: "claude-sonnet-5",
+    maxTokens: 16000
+  });
+  recorder.corpus = { receivedNoteCount: notes.length, usedNoteCount: boundedNotes.length };
+  const finish = (status, payload) => {
+    response.setHeader("Cache-Control", "no-store");
+    return sendJson(response, status, body.includeEvaluation === true ? { ...payload, evaluation: recorder.snapshot() } : payload);
+  };
 
   try {
     const upstreamResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -76,7 +90,7 @@ export default async function handler(request, response) {
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 16000,
-        system: `${integrityRules}\n\n${body.instructions}`,
+        system: systemPrompt,
         messages: [
           {
             role: "user",
@@ -92,39 +106,29 @@ export default async function handler(request, response) {
     });
 
     const responseText = await upstreamResponse.text();
+    recorder.rawModelResponse = responseText;
     if (!upstreamResponse.ok) {
-      return sendJson(response, 502, { error: { message: "Lab analysis failed" } });
+      return finish(502, { error: { message: "Lab analysis failed" } });
     }
 
     const responseBody = JSON.parse(responseText);
+    recorder.rawModelResponse = responseBody;
     const analysis = responseBody.content
       ?.filter((block) => block.type === "text" && typeof block.text === "string")
       .map((block) => block.text)
       .join("");
 
     if (!analysis?.trim()) {
-      return sendJson(response, 502, { error: { message: "Lab analysis failed" } });
+      return finish(502, { error: { message: "Lab analysis failed" } });
     }
 
+    if (body.includeEvaluation === true) {
+      return finish(200, { analysis, usage: responseBody.usage || null });
+    }
     return sendText(response, 200, analysis);
   } catch {
-    return sendJson(response, 502, { error: { message: "Lab analysis failed" } });
+    return finish(502, { error: { message: "Lab analysis failed" } });
   }
-}
-
-function hasValidLabKey(request) {
-  const expectedKey = process.env.LAB_KEY;
-  const suppliedKey = typeof request.headers?.get === "function"
-    ? request.headers.get("x-lab-key")
-    : request.headers?.["x-lab-key"];
-
-  if (typeof expectedKey !== "string" || !expectedKey || typeof suppliedKey !== "string") {
-    return false;
-  }
-
-  const expected = Buffer.from(expectedKey);
-  const supplied = Buffer.from(suppliedKey);
-  return expected.length === supplied.length && timingSafeEqual(expected, supplied);
 }
 
 function sanitizeNotes(notes) {

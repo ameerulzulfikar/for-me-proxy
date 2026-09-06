@@ -1,4 +1,10 @@
 import { LIMITS, isPlainObject, readJsonBody, sendJson, totalStringLength } from "./_validation.js";
+import { createEvaluationRecorder, hasValidLabKey } from "./_evaluation.js";
+
+// Bump manually when changing the prompt. The lab snapshots the deployed text.
+export const OVERVIEW_PROMPT_VERSION = "overview-v1";
+const MODEL = "claude-sonnet-5";
+const CACHE_CONTROL = Object.freeze({ type: "ephemeral", ttl: "1h" });
 
 const MAX_NOTES = 3_000;
 const MAX_COMBINED_NOTE_TEXT = 2_100_000; // Approximately 700,000 tokens at 3 characters per token.
@@ -183,27 +189,48 @@ export default async function handler(request, response) {
     return sendJson(response, 400, { error: { message: "Invalid request body" } });
   }
 
+  const includeEvaluation = body.includeEvaluation === true;
+  if (includeEvaluation && !hasValidLabKey(request)) {
+    return sendJson(response, 401, { error: { message: "Unauthorized" } });
+  }
+  const recorder = createEvaluationRecorder({
+    promptVersion: OVERVIEW_PROMPT_VERSION,
+    systemPrompt,
+    model: MODEL,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    toolSchema: overviewTool,
+    cacheControl: CACHE_CONTROL
+  });
+  const finish = (status, payload) => {
+    if (includeEvaluation) {
+      response.setHeader("Cache-Control", "no-store");
+    }
+    return sendJson(response, status, includeEvaluation ? { ...payload, evaluation: recorder.snapshot() } : payload);
+  };
+  const fail = (detail) => finish(502, { error: { message: "Import overview failed", detail } });
+
   if (!Array.isArray(body.notes)) {
-    return sendJson(response, 400, { error: { message: "Missing notes array" } });
+    return finish(400, { error: { message: "Missing notes array" } });
   }
 
   if (body.notes.length > MAX_NOTES) {
-    return sendJson(response, 413, { error: { message: "Too many notes" } });
+    return finish(413, { error: { message: "Too many notes" } });
   }
 
   const notes = sanitizeNotes(body.notes);
   if (!notes) {
-    return sendJson(response, 400, { error: { message: "Invalid notes array" } });
+    return finish(400, { error: { message: "Invalid notes array" } });
   }
 
   if (notes.some((note) => note.text.length > LIMITS.overviewNoteText)) {
-    return sendJson(response, 413, { error: { message: "Note text too large" } });
+    return finish(413, { error: { message: "Note text too large" } });
   }
 
   const boundedNotes = totalStringLength(notes, "text") > MAX_COMBINED_NOTE_TEXT
     ? dropOldestNotes(notes, MAX_COMBINED_NOTE_TEXT)
     : notes;
   const scaffoldedNotes = scaffoldNotes(boundedNotes);
+  recorder.corpus = { receivedNoteCount: notes.length, usedNoteCount: scaffoldedNotes.length };
 
   try {
     const upstreamResponse = await fetch("https://api.anthropic.com/v1/messages", {
@@ -215,9 +242,9 @@ export default async function handler(request, response) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-5",
+        model: MODEL,
         max_tokens: MAX_OUTPUT_TOKENS,
-        system: systemPrompt,
+        system: [{ type: "text", text: systemPrompt, cache_control: CACHE_CONTROL }],
         tools: [overviewTool],
         tool_choice: { type: "tool", name: overviewTool.name },
         messages: [
@@ -226,7 +253,8 @@ export default async function handler(request, response) {
             content: [
               {
                 type: "text",
-                text: buildOverviewPrompt(scaffoldedNotes)
+                text: buildOverviewPrompt(scaffoldedNotes),
+                cache_control: CACHE_CONTROL
               }
             ]
           }
@@ -235,9 +263,10 @@ export default async function handler(request, response) {
     });
 
     const responseText = await upstreamResponse.text();
+    recorder.rawModelResponse = responseText;
     if (!upstreamResponse.ok) {
       console.error("Import overview provider error", upstreamResponse.status, responseText);
-      return sendImportOverviewFailure(response, {
+      return fail({
         type: "provider_http_error",
         message: `Provider returned HTTP ${upstreamResponse.status}`,
         provider_status: upstreamResponse.status,
@@ -250,9 +279,10 @@ export default async function handler(request, response) {
     let responseBody;
     try {
       responseBody = JSON.parse(responseText);
+      recorder.rawModelResponse = responseBody;
     } catch (error) {
       console.error("Import overview provider response parse failed", formatCaughtError(error));
-      return sendImportOverviewFailure(response, {
+      return fail({
         type: "parse_error",
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack || null : null,
@@ -264,7 +294,7 @@ export default async function handler(request, response) {
     const providerDiagnostics = getProviderDiagnostics(responseBody);
     if (["max_tokens", "model_context_window_exceeded"].includes(providerDiagnostics.stop_reason)) {
       console.error(`Import overview provider stopped before completing tool output stop_reason=${providerDiagnostics.stop_reason} output_tokens=${providerDiagnostics.usage?.output_tokens ?? "unknown"}`);
-      return sendImportOverviewFailure(response, {
+      return fail({
         type: "stop_reason",
         message: `Provider stopped with ${providerDiagnostics.stop_reason} before completing the overview`,
         ...providerDiagnostics
@@ -277,7 +307,7 @@ export default async function handler(request, response) {
 
     if (!validation.overview) {
       console.error(`Import overview response failed validation stop_reason=${providerDiagnostics.stop_reason ?? "unknown"} output_tokens=${providerDiagnostics.usage?.output_tokens ?? "unknown"}`);
-      return sendImportOverviewFailure(response, {
+      return fail({
         type: toolUse ? "tool_input_validation_error" : "missing_tool_output",
         message: toolUse ? "Provider tool input failed overview validation" : "Provider response did not contain the required overview tool output",
         failed_fields: validation.diagnostics.failedFields,
@@ -288,10 +318,10 @@ export default async function handler(request, response) {
     }
 
     try {
-      return sendJson(response, 200, verifyOverview(validation.overview, scaffoldedNotes));
+      return finish(200, { ...verifyOverview(validation.overview, scaffoldedNotes), usage: providerDiagnostics.usage });
     } catch (error) {
       console.error("Import overview verification crashed", formatCaughtError(error));
-      return sendImportOverviewFailure(response, {
+      return fail({
         type: "verification_crash",
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack || null : null,
@@ -300,7 +330,7 @@ export default async function handler(request, response) {
     }
   } catch (error) {
     console.error("Import overview proxy failed", formatCaughtError(error));
-    return sendImportOverviewFailure(response, {
+    return fail({
       type: isTimeoutError(error) ? "timeout" : "caught_exception",
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack || null : null,
@@ -308,11 +338,6 @@ export default async function handler(request, response) {
       usage: null
     });
   }
-}
-
-// TODO remove after debugging: temporarily expose provider-safe failure metadata in 502 responses.
-function sendImportOverviewFailure(response, detail) {
-  return sendJson(response, 502, { error: { message: "Import overview failed", detail } });
 }
 
 function getProviderDiagnostics(responseBody) {

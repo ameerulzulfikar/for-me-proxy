@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import handler from "../api/lab.js";
+import { OVERVIEW_PROMPT_VERSION } from "../api/import-overview.js";
 
 test("lab requires its key before making a provider request", async (context) => {
   const previousLabKey = process.env.LAB_KEY;
@@ -89,6 +90,40 @@ test("lab sends free-text analysis with an authoritative timeline index", async 
   assert.equal(response.statusCode, 200);
   assert.equal(response.headers["Content-Type"], "text/plain; charset=utf-8");
   assert.equal(response.body, "First part. Second part.");
+});
+
+test("legacy lab can return authenticated run metadata without changing its prompt or generation settings", async (context) => {
+  const previousApiKey = process.env.ANTHROPIC_API_KEY;
+  const previousLabKey = process.env.LAB_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
+  process.env.LAB_KEY = "test-lab-key";
+  context.after(() => {
+    restoreEnvironment("ANTHROPIC_API_KEY", previousApiKey);
+    restoreEnvironment("LAB_KEY", previousLabKey);
+    globalThis.fetch = previousFetch;
+  });
+  const requests = [];
+  const raw = { model: "claude-sonnet-5", content: [{ type: "text", text: "A reading." }], usage: { input_tokens: 1000, output_tokens: 100 } };
+  globalThis.fetch = async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return new Response(JSON.stringify(raw));
+  };
+  const request = { method: "POST", headers: { "x-lab-key": "test-lab-key" }, body: { notes: [], instructions: "Test instructions." } };
+  const normal = createResponse();
+  await handler(request, normal);
+  const detailed = createResponse();
+  await handler({ ...request, body: { ...request.body, includeEvaluation: true } }, detailed);
+  const result = JSON.parse(detailed.body);
+  assert.equal(result.analysis, normal.body);
+  assert.deepEqual(requests[0], requests[1]);
+  assert.equal(result.evaluation.systemPrompt, requests[1].system);
+  assert.ok(result.evaluation.promptVersion.startsWith(`${OVERVIEW_PROMPT_VERSION}/lab-`));
+  assert.match(result.evaluation.promptVersion, /\/lab-[a-f0-9]{12}$/u);
+  assert.deepEqual(result.evaluation.rawModelResponse, raw);
+  assert.deepEqual(result.evaluation.usage, raw.usage);
+  assert.equal(result.evaluation.costEstimate.totalUsd, 0.003);
+  assert.equal(detailed.headers["Cache-Control"], "no-store");
 });
 
 function restoreEnvironment(name, previousValue) {
