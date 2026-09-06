@@ -593,6 +593,90 @@ test("import overview tolerates wrong optional types and unexpected fields", asy
   });
 });
 
+test("import overview unwraps each supported single-key wrapper and logs only its name", async (context) => {
+  const logs = context.mock.method(console, "info", () => {});
+  let input = baseOverviewInput();
+  installProviderMock(context, () => successfulProviderResponse(input));
+  const baseline = createResponse();
+  await handler(createRequest([]), baseline);
+  assert.equal(logs.mock.callCount(), 0);
+
+  for (const wrapper of ["parameters", "input", "arguments", "properties"]) {
+    input = { [wrapper]: baseOverviewInput() };
+    const response = createResponse();
+    await handler(createRequest([]), response);
+    assert.equal(response.statusCode, 200, wrapper);
+    assert.deepEqual(JSON.parse(response.body), JSON.parse(baseline.body), wrapper);
+  }
+  assert.deepEqual(logs.mock.calls.map((call) => call.arguments), [
+    ["Import overview unwrapped tool input wrapper=parameters"],
+    ["Import overview unwrapped tool input wrapper=input"],
+    ["Import overview unwrapped tool input wrapper=arguments"],
+    ["Import overview unwrapped tool input wrapper=properties"]
+  ]);
+});
+
+test("import overview leaves ambiguous wrappers and non-overview objects unchanged", async (context) => {
+  const logs = context.mock.method(console, "info", () => {});
+  let input;
+  installProviderMock(context, () => successfulProviderResponse(input));
+  for (input of [
+    { payload: baseOverviewInput() },
+    { parameters: baseOverviewInput(), extra: true },
+    { parameters: null },
+    { input: [baseOverviewInput()] },
+    { arguments: JSON.stringify(baseOverviewInput()) },
+    { properties: { unrelated: true } },
+    { parameters: { portrait: "Incomplete payload" } },
+    { parameters: { input: baseOverviewInput() } }
+  ]) {
+    const response = createResponse();
+    await handler(createRequest([]), response);
+    const detail = JSON.parse(response.body).error.detail;
+    assert.equal(response.statusCode, 502);
+    assert.equal(detail.type, "tool_input_validation_error");
+    assert.deepEqual(detail.top_level_keys, Object.keys(input));
+    assert.deepEqual(detail.failed_fields, [{ field: "portrait", reason: "missing", expected: "non-empty string" }]);
+  }
+  assert.equal(logs.mock.callCount(), 0);
+});
+
+test("unwrapped overview input still goes through normal field validation", async (context) => {
+  const logs = context.mock.method(console, "info", () => {});
+  const inner = baseOverviewInput({ portrait: "" });
+  installProviderMock(context, () => successfulProviderResponse({ parameters: inner }));
+  const response = createResponse();
+  await handler(createRequest([]), response);
+  const detail = JSON.parse(response.body).error.detail;
+  assert.equal(response.statusCode, 502);
+  assert.equal(detail.type, "tool_input_validation_error");
+  assert.deepEqual(detail.top_level_keys, Object.keys(inner));
+  assert.deepEqual(detail.failed_fields, [{ field: "portrait", reason: "failed_constraint", constraint: "must not be empty" }]);
+  assert.equal(logs.mock.callCount(), 1);
+});
+
+test("unwrapping preserves the raw evaluation response and applies privacy screening", async (context) => {
+  context.mock.method(console, "info", () => {});
+  const previousLabKey = process.env.LAB_KEY;
+  process.env.LAB_KEY = "evaluation-test-key";
+  context.after(() => restoreEnvironment("LAB_KEY", previousLabKey));
+  const input = { parameters: baseOverviewInput({
+    portrait: "You keep practical lists. Therapy shaped the work. You build useful things.",
+    questions: ["What followed self-harm?", "What keeps returning?", "What changed you?"]
+  }) };
+  installProviderMock(context, () => successfulProviderResponse(input));
+  const request = createRequest([], { includeEvaluation: true });
+  request.headers = new Headers({ "x-lab-key": "evaluation-test-key" });
+  const response = createResponse();
+  await handler(request, response);
+  const result = JSON.parse(response.body);
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(result.evaluation.rawModelResponse.content[0].input, input);
+  assert.equal(result.portrait, "You keep practical lists. You build useful things.");
+  assert.deepEqual(result.questions, ["What keeps returning?", "What changed you?"]);
+  assert.deepEqual(result.verification.failures, [{ reason: "privacy_health" }, { reason: "privacy_selfharm" }]);
+});
+
 test("import overview reports failed fields and key shapes for unusable tool input", async (context) => {
   installProviderMock(context, () => providerResponse({
     content: [{

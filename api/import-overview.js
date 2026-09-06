@@ -314,7 +314,7 @@ export default async function handler(request, response) {
 
     const responseContent = Array.isArray(responseBody?.content) ? responseBody.content : [];
     const toolUse = responseContent.find((block) => isPlainObject(block) && block.type === "tool_use" && block.name === overviewTool.name);
-    const validation = validateOverview(toolUse?.input);
+    const validation = validateOverview(normalizeOverviewToolInput(toolUse?.input));
 
     if (!validation.overview) {
       console.error(`Import overview response failed validation stop_reason=${providerDiagnostics.stop_reason ?? "unknown"} output_tokens=${providerDiagnostics.usage?.output_tokens ?? "unknown"}`);
@@ -509,6 +509,26 @@ function dropOldestNotes(notes, limit) {
   }
 
   return notes.filter((_, index) => keep.has(index));
+}
+
+function normalizeOverviewToolInput(value) {
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || !["parameters", "input", "arguments", "properties"].includes(keys[0])) {
+    return value;
+  }
+
+  const wrapper = keys[0];
+  const inner = value[wrapper];
+  if (!isPlainObject(inner) || !overviewTool.input_schema.required.every((field) => Object.hasOwn(inner, field))) {
+    return value;
+  }
+
+  console.info(`Import overview unwrapped tool input wrapper=${wrapper}`);
+  return inner;
 }
 
 function validateOverview(value) {
