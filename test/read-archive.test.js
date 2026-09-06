@@ -236,3 +236,39 @@ test("reading CLI help works without credentials", async () => {
   assert.match(stdout, /--limit N/u);
   assert.match(stdout, /AFTER skipping saved readings/u);
 });
+
+test("reading CLI startup dry run processes 50 frozen notes in a real subprocess", async (context) => {
+  const data = await fixture(context, 700);
+  const subsetPath = join(data.directory, "subset.json");
+  await writeFile(subsetPath, JSON.stringify(data.filenames));
+  // Exercise the actual entrypoint, not imported main/readArchive. Stub transport
+  // before startup so this test cannot send private notes or incur provider costs.
+  const preload = `globalThis.fetch = async (_url, options) => {
+    const note = JSON.parse(options.body);
+    return new Response(JSON.stringify({
+      record: { noteId: note.noteId, date: note.date, ...${JSON.stringify(reading)} },
+      reader: ${JSON.stringify(READING_CONFIG)}, readerSignature: ${JSON.stringify(READING_SIGNATURE)},
+      model: "claude-sonnet-5", providerCalled: false,
+      usage: { input_tokens: 0, output_tokens: 0 }
+    }));
+  };`;
+  const env = { ...process.env, LAB_KEY: "dry-run-only" };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.ANTHROPIC_API_KEY;
+  const preloadPath = join(data.directory, "dry-run-fetch.mjs");
+  await writeFile(preloadPath, preload);
+  const { stdout, stderr } = await promisify(execFile)(process.execPath, [
+    "--import", preloadPath,
+    "test/read-archive.mjs", data.folderPath,
+    "--subset", subsetPath, "--limit", "50", "--output", data.outputPath
+  ], { env, timeout: 30_000 });
+  assert.equal(stderr, "");
+  assert.match(stdout, /50 saved, 0 failed, 0 skipped; 650 pending/u);
+  assert.match(stdout, /Status: completed/u);
+  assert.doesNotMatch(stdout, /before initialization|Usage:/u);
+  const saved = JSON.parse(await readFile(data.outputPath, "utf8"));
+  assert.deepEqual(Object.keys(saved.records).sort(), data.filenames.slice(0, 50));
+  assert.equal(saved.runs[0].attempts.length, 50);
+  assert.ok(saved.runs[0].attempts.every((attempt) => attempt.providerCalled === false));
+  assert.equal(saved.totals.totalCostUsd, 0);
+});

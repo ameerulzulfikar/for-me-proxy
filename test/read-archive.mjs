@@ -22,8 +22,6 @@ Reuse --output to resume; failed notes are retried once on the next invocation.
 Note IDs are stable archive-relative filenames, not renumbered by subset or limit.
 Readings are private, unscreened lab material, NOT an app-facing overview.`;
 
-if (!process.env.NODE_TEST_CONTEXT && process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main();
-
 export function parseArguments(args) {
   if (args.length === 1 && ["--help", "-h"].includes(args[0])) return { help: true };
   const values = {};
@@ -310,3 +308,6 @@ export async function main(args = process.argv.slice(2)) {
     process.removeListener("SIGTERM", interrupt);
   }
 }
+
+// Initialize every module-level binding before the CLI starts using the helpers.
+if (!process.env.NODE_TEST_CONTEXT && process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main();
