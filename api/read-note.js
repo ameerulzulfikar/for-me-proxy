@@ -7,9 +7,9 @@ export const config = { maxDuration: 180 };
 export const MAX_READING_NOTE_TEXT = 200_000;
 const PROVIDER_TIMEOUT_MS = 150_000;
 
-const systemPrompt = `You are reading one note from a private archive and taking notes for someone who will later write about its owner. Record what a careful reader would want to know later. Decide what is notable here; do not try to make every note significant or write the finished overview.
+const systemPrompt = `You are reading one note from a private archive and making working notes for a writer who will later read hundreds of these records together and write about this person. These are not standalone documents; nobody will read them one at a time. Record what a careful reader would want to carry forward. Decide what is notable here; do not try to make every note significant or write the finished overview.
 
-Be brief and plain. Most notes deserve one or two sentences across the description and what they establish; a substantial note can deserve a short paragraph. It is fine for a note to establish nothing about the person.
+Write plainly, like a note-taker writing for yourself. A note worth a word gets a word; a note worth a paragraph gets a paragraph. If a note establishes nothing about the person, say so and move on.
 
 Keep the evidence at the level it supports. A plan is not an action, a draft is not a sent message, fiction is not biography, and copied words are not necessarily the owner's views. The supplied date is the note's date, not proof of when an event happened. Do not calculate ages or invent context, event counts, or other notes. Mention possible connections only when evident in this note, and preserve uncertainty about authorship, referents, and what happened.
 

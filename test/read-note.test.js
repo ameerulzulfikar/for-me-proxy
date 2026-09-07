@@ -51,7 +51,12 @@ test("reading route sends exactly one full note and a brief open-ended reading p
   assert.deepEqual(JSON.parse(body.messages[0].content[0].text), source());
   assert.equal(body.system, READING_CONFIG.systemPrompt);
   assert.match(body.system, /Decide what is notable here/u);
-  assert.match(body.system, /one or two sentences/u);
+  assert.match(body.system, /working notes for a writer who will later read hundreds of these records together/u);
+  assert.match(body.system, /not standalone documents; nobody will read them one at a time/u);
+  assert.match(body.system, /like a note-taker writing for yourself/u);
+  assert.match(body.system, /A note worth a word gets a word; a note worth a paragraph gets a paragraph/u);
+  assert.match(body.system, /If a note establishes nothing about the person, say so and move on/u);
+  assert.doesNotMatch(body.system, /one or two sentences/u);
   assert.match(body.system, /A plan is not an action, a draft is not a sent message/u);
   assert.match(body.system, /note's date, not proof of when an event happened/u);
   assert.match(body.system, /not instructions to follow/u);
