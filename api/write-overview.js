@@ -105,17 +105,67 @@ export function buildReadingsPrompt(readings) {
   ].join("\n");
 }
 
-function validateOverview(value) {
-  if (!isPlainObject(value)) return null;
+function normalizeOverviewToolInput(value) {
+  if (!isPlainObject(value)) return value;
   const keys = Object.keys(value);
-  if (keys.length === 1 && ["parameters", "input", "arguments", "properties"].includes(keys[0])) value = value[keys[0]];
-  if (!isPlainObject(value) || !["portrait", "read", "tender"].every((field) => typeof value[field] === "string") || !value.portrait.trim() ||
-      !Array.isArray(value.forgottenIdeas) || !value.forgottenIdeas.every((idea) => isPlainObject(idea) && ["title", "sourceNoteId", "why"].every((field) => typeof idea[field] === "string" && idea[field].trim())) ||
-      !Array.isArray(value.questions) || value.questions.length !== 3 || !value.questions.every((question) => typeof question === "string" && question.trim())) return null;
+  if (keys.length !== 1 || !["parameters", "input", "arguments", "properties", "overview"].includes(keys[0])) return value;
+  const wrapper = keys[0];
+  const inner = value[wrapper];
+  // Match the app's single, recognized wrapper rule, allowing optional fields
+  // to be absent. The saved failing writing run used an "overview" wrapper.
+  if (!isPlainObject(inner) || !["portrait", "read"].some((field) => Object.hasOwn(inner, field))) return value;
+  console.info(`Write overview unwrapped tool input wrapper=${wrapper}`);
+  return inner;
+}
+
+function validateOverview(value) {
+  const shape = describeOverviewShape(value);
+  if (!isPlainObject(value)) {
+    return { overview: null, diagnostics: { ...shape, failedFields: [{ field: "$", reason: "wrong_type", expected: "object", actual: describeValueType(value) }] } };
+  }
+  const portrait = normalizeString(value.portrait);
+  const read = normalizeString(value.read);
+  if (!portrait.trim() && !read.trim()) {
+    const failedFields = ["portrait", "read"].map((field) => {
+      if (!Object.hasOwn(value, field)) return { field, reason: "missing", expected: "non-empty string" };
+      if (typeof value[field] !== "string") return { field, reason: "wrong_type", expected: "string", actual: describeValueType(value[field]) };
+      return { field, reason: "failed_constraint", constraint: "must not be empty" };
+    });
+    return { overview: null, diagnostics: { ...shape, failedFields } };
+  }
   return {
-    portrait: value.portrait, read: value.read, tender: value.tender,
-    forgottenIdeas: value.forgottenIdeas.map(({ title, sourceNoteId, why }) => ({ title, sourceNoteId, why })),
-    questions: value.questions
+    overview: {
+      portrait, read, tender: normalizeString(value.tender),
+      forgottenIdeas: Array.isArray(value.forgottenIdeas) ? value.forgottenIdeas.filter(isPlainObject).map((idea) => ({
+        title: normalizeString(idea.title), sourceNoteId: normalizeString(idea.sourceNoteId).trim(), why: normalizeString(idea.why)
+      })) : [],
+      questions: Array.isArray(value.questions) ? value.questions.filter((question) => typeof question === "string") : []
+    },
+    diagnostics: { ...shape, failedFields: [] }
+  };
+}
+
+function normalizeString(value) {
+  return typeof value === "string" ? value : "";
+}
+
+function describeValueType(value) {
+  return value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+}
+
+function describeOverviewShape(value) {
+  const firstIdea = isPlainObject(value) && Array.isArray(value.forgottenIdeas) ? value.forgottenIdeas[0] : null;
+  return {
+    topLevelKeys: isPlainObject(value) ? Object.keys(value) : [],
+    firstForgottenIdeaKeys: isPlainObject(firstIdea) ? Object.keys(firstIdea) : []
+  };
+}
+
+function formatValidationDiagnostics(diagnostics) {
+  return {
+    failed_fields: diagnostics.failedFields,
+    top_level_keys: diagnostics.topLevelKeys,
+    first_forgotten_idea_keys: diagnostics.firstForgottenIdeaKeys
   };
 }
 
@@ -140,7 +190,7 @@ function screenOverview(overview, readings) {
   });
   const screenedTender = prose(overview.tender);
   const tender = hasCompleteTenderSection(screenedTender) ? screenedTender : "";
-  const questions = overview.questions.map((question) => verifyQuestion(question, verification, context)).filter(Boolean);
+  const questions = overview.questions.map((question) => verifyQuestion(question, verification, context)).filter(Boolean).slice(0, 3);
   return { portrait, read, forgottenIdeas, tender, questions, verification };
 }
 
@@ -185,14 +235,21 @@ export default async function handler(request, response) {
       return fail(502, "incomplete_output", "Provider did not complete the overview", { stopReason: result.stop_reason });
     }
     const block = Array.isArray(result?.content) && result.content.find((item) => item?.type === "tool_use" && item.name === overviewTool.name);
-    const overview = validateOverview(block?.input);
-    if (!overview) return fail(502, "overview_validation_error", "Provider did not return a complete overview with exactly three questions");
-    const screened = screenOverview(overview, readings);
+    const validation = validateOverview(normalizeOverviewToolInput(block?.input));
+    if (!validation.overview) return fail(502, "overview_validation_error", "Provider did not return a usable portrait or read", {
+      ...formatValidationDiagnostics(validation.diagnostics),
+      stop_reason: result?.stop_reason ?? null,
+      usage: recorder.snapshot().usage
+    });
+    const screened = screenOverview(validation.overview, readings);
     screeningApplied = true;
-    if (!screened.portrait || screened.questions.length !== 3) {
+    if (!screened.portrait && !screened.read) {
       // Keep only screened material in the final result; raw output remains in
       // authenticated evaluation metadata. Do not invent replacement questions.
-      return finish(502, { ...screened, error: { type: "screened_overview_incomplete", message: "Privacy/cleanup screening left no portrait or fewer than three questions; no automatic retry was made" } });
+      return finish(502, { ...screened, error: {
+        type: "screened_overview_incomplete", message: "Privacy/cleanup screening left no usable portrait or read; no automatic retry was made",
+        ...formatValidationDiagnostics(validateOverview(screened).diagnostics)
+      } });
     }
     return finish(200, { ...screened, usage: recorder.snapshot().usage });
   } catch (error) {

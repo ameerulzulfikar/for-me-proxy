@@ -142,36 +142,140 @@ test("privacy screens every prose field and preserves unscreened output only in 
   }
 });
 
-test("unsafe questions fail closed without invented replacements or a second provider request", async (context) => {
+test("privacy removes unsafe questions without rejecting the overview or making a second request", async (context) => {
   let input;
   environment(context, () => provider(input));
   for (const question of ["Did therapy affect your workshop?", "How did Oliver's death affect you?", "What stopped you from self-harm?"]) {
     input = overview({ questions: [question, ...overview().questions.slice(1)] });
     const result = await invoke();
-    assert.equal(result.status, 502);
-    assert.equal(result.payload.error.type, "screened_overview_incomplete");
+    assert.equal(result.status, 200);
+    assert.equal(result.payload.error, undefined);
     assert.equal(result.payload.questions.length, 2);
     assert.equal(result.payload.evaluation.screeningApplied, true);
     assert.equal(result.payload.evaluation.costEstimate.totalUsd, 0.004);
   }
   assert.equal(globalThis.fetch.mock.callCount(), 3);
   input = overview({ portrait: "You attended therapy." });
-  assert.equal((await invoke()).status, 502);
+  const readOnly = await invoke();
+  assert.equal(readOnly.status, 200);
+  assert.equal(readOnly.payload.portrait, "");
+  assert.equal(readOnly.payload.read, overview().read);
+  input = overview({ read: "You attended therapy." });
+  const portraitOnly = await invoke();
+  assert.equal(portraitOnly.status, 200);
+  assert.equal(portraitOnly.payload.read, "");
+  input = overview({ portrait: "You attended therapy.", read: "You wrote about self-harm." });
+  const unusable = await invoke();
+  assert.equal(unusable.status, 502);
+  assert.equal(unusable.payload.error.type, "screened_overview_incomplete");
+  assert.deepEqual(unusable.payload.error.failed_fields.map(({ field }) => field), ["portrait", "read"]);
 });
 
-test("output validation requires the whole schema and exactly three questions, with supported wrappers", async (context) => {
+test("question counts and types are tolerant, with the first three chosen after screening", async (context) => {
   let input;
   environment(context, () => provider(input));
-  for (input of [null, {}, overview({ portrait: " " }), overview({ read: null }), overview({ tender: undefined }), overview({ forgottenIdeas: [{}] }), overview({ questions: [] }), overview({ questions: [...overview().questions, "Fourth?"] }), overview({ questions: [1, "Second?", "Third?"] })]) {
+  const questions = overview().questions;
+  for (const [returned, expected] of [
+    [undefined, []], [null, []], ["Not an array", []], [[], []],
+    [questions.slice(0, 1), questions.slice(0, 1)], [questions.slice(0, 2), questions.slice(0, 2)],
+    [questions, questions], [[...questions, "Fourth?", "Fifth?"], questions],
+    [[1, {}, null, " ", questions[0]], [questions[0]]],
+    [["Did therapy help?", "What stopped you from self-harm?"], []]
+  ]) {
+    input = overview({ questions: returned });
+    const result = await invoke();
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.payload.questions, expected);
+  }
+  input = overview({ portrait: "Maya helps build furniture.", questions: ["Did therapy help?", ...questions, "Does your wife Maya enjoy teaching?"] });
+  const result = await invoke();
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.payload.questions, questions);
+  // Even a question beyond the retained three can establish a partner's name.
+  assert.equal(result.payload.portrait, "Your partner helps build furniture.");
+  assert.deepEqual(result.payload.evaluation.rawModelResponse.content[0].input, input);
+});
+
+test("optional fields default and malformed ideas do not discard usable portrait or read text", async (context) => {
+  let input;
+  environment(context, () => provider(input));
+  for (input of [
+    { portrait: overview().portrait }, { read: overview().read },
+    overview({ portrait: " " }), overview({ portrait: null }), overview({ read: null }),
+    overview({ tender: undefined, forgottenIdeas: undefined }), overview({ tender: 42, forgottenIdeas: {} }),
+    overview({ tender: null, forgottenIdeas: [null, 3, {}, { title: "Empty idea" }, { sourceNoteId: reading().noteId, title: "", why: false }] })
+  ]) {
+    const result = await invoke();
+    assert.equal(result.status, 200);
+    assert.equal(typeof result.payload.portrait, "string");
+    assert.equal(typeof result.payload.read, "string");
+    assert.equal(result.payload.tender, "");
+    assert.ok(Array.isArray(result.payload.forgottenIdeas));
+    if (!Array.isArray(input.forgottenIdeas) || input.forgottenIdeas[0] === null) assert.deepEqual(result.payload.forgottenIdeas, []);
+  }
+  input = { read: overview().read, forgottenIdeas: [null, {}, { title: "Incomplete", sourceNoteId: reading().noteId }, { ...overview().forgottenIdeas[0], sourceNoteId: ` ${reading().noteId} ` }] };
+  const result = await invoke();
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.payload.forgottenIdeas, overview().forgottenIdeas);
+});
+
+test("recognized single-key wrappers accept complete and partial overviews, including the saved run's wrapper", async (context) => {
+  let input;
+  environment(context, () => provider(input, { usage: { input_tokens: 1000, output_tokens: 1765 } }));
+  const logs = context.mock.method(console, "info", () => {});
+  for (const wrapper of ["parameters", "input", "arguments", "properties", "overview"]) {
+    for (const inner of [overview(), { portrait: overview().portrait }, { read: overview().read }]) {
+      input = { [wrapper]: inner };
+      const result = await invoke();
+      assert.equal(result.status, 200);
+      assert.equal(result.payload.portrait, inner.portrait ?? "");
+      assert.equal(result.payload.read, inner.read ?? "");
+      assert.deepEqual(result.payload.questions, inner.questions ?? []);
+      assert.deepEqual(result.payload.evaluation.rawModelResponse.content[0].input, input);
+      assert.equal(result.payload.evaluation.usage.output_tokens, 1765);
+      assert.equal(result.payload.evaluation.costEstimate.totalUsd, 0.01965);
+    }
+  }
+  assert.equal(logs.mock.callCount(), 15);
+  assert.ok(logs.mock.calls.every(({ arguments: args }) => /^Write overview unwrapped tool input wrapper=\w+$/u.test(args[0])));
+});
+
+test("unusable responses report present keys and failed fields without exposing field values", async (context) => {
+  let input;
+  environment(context, () => provider(input));
+  const logs = context.mock.method(console, "info", () => {});
+  for (input of [null, [], "text", {}, { portrait: " ", read: null, forgottenIdeas: [{ title: "private title" }] }, { portrait: [], read: false }]) {
     const result = await invoke();
     assert.equal(result.status, 502);
-    assert.equal(result.payload.error.type, "overview_validation_error");
+    const error = result.payload.error;
+    assert.equal(error.type, "overview_validation_error");
+    assert.equal(error.stop_reason, "tool_use");
+    assert.equal(error.usage.output_tokens, 200);
     assert.equal(result.payload.evaluation.costEstimate.totalUsd, 0.004);
+    if (input === null || Array.isArray(input) || typeof input !== "object") {
+      assert.deepEqual(error.top_level_keys, []);
+      assert.equal(error.failed_fields[0].field, "$");
+      assert.equal(error.failed_fields[0].reason, "wrong_type");
+    } else {
+      assert.deepEqual(error.top_level_keys, Object.keys(input));
+      assert.deepEqual(error.failed_fields.map(({ field }) => field), ["portrait", "read"]);
+      assert.equal(error.failed_fields[0].reason, !Object.hasOwn(input, "portrait") ? "missing" : typeof input.portrait === "string" ? "failed_constraint" : "wrong_type");
+      assert.equal(error.failed_fields[1].reason, !Object.hasOwn(input, "read") ? "missing" : "wrong_type");
+    }
+    assert.deepEqual(error.first_forgotten_idea_keys, input?.forgottenIdeas ? ["title"] : []);
+    assert.doesNotMatch(JSON.stringify(error), /private title/u);
   }
-  for (const wrapper of ["parameters", "input", "arguments", "properties"]) {
-    input = { [wrapper]: overview() };
-    assert.equal((await invoke()).status, 200);
+  input = { parameters: { portrait: 4, read: "" } };
+  const wrapped = await invoke();
+  assert.equal(wrapped.status, 502);
+  assert.deepEqual(wrapped.payload.error.top_level_keys, ["portrait", "read"]);
+  assert.deepEqual(wrapped.payload.error.failed_fields.map(({ reason }) => reason), ["wrong_type", "failed_constraint"]);
+  for (input of [{ parameters: overview(), extra: true }, { arbitrary: overview() }, { parameters: { message: "Not an overview" } }]) {
+    const result = await invoke();
+    assert.equal(result.status, 502);
+    assert.deepEqual(result.payload.error.top_level_keys, Object.keys(input));
   }
+  assert.equal(logs.mock.callCount(), 1);
 });
 
 test("provider errors preserve raw output and available accounting without retries", async (context) => {
@@ -199,7 +303,8 @@ test("provider errors preserve raw output and available accounting without retri
 });
 
 test("runner saves comparable private records using actual endpoint metadata and only reads its input file", async (context) => {
-  environment(context, () => provider());
+  environment(context, () => provider({ overview: overview({ questions: overview().questions.slice(0, 2) }) }));
+  context.mock.method(console, "info", () => {});
   const { readingsPath, recordPaths } = await fixture(context);
   let calls = 0;
   const { record, outputPath, backlogWarning } = await runWritingOverview({ readingsPath }, {
@@ -224,7 +329,10 @@ test("runner saves comparable private records using actual endpoint metadata and
   assert.equal(record.corpus.noteCount, 1);
   assert.equal(record.corpus.characterCount, buildReadingsPrompt([reading()]).length);
   assert.match(record.corpus.sha256, /^[a-f0-9]{64}$/u);
-  assert.equal(record.rawModelResponse.content[0].input.portrait, overview().portrait);
+  assert.equal(record.rawModelResponse.content[0].input.overview.portrait, overview().portrait);
+  assert.equal(record.finalScreenedResponse.questions.length, 2);
+  assert.equal(record.statusCode, 200);
+  assert.equal(record.error, null);
   assert.equal(record.finalScreenedResponse.evaluation, undefined);
   assert.equal(record.screeningApplied, true);
   assert.equal(record.costEstimate.totalUsd, 0.004);
@@ -238,7 +346,7 @@ test("runner saves comparable private records using actual endpoint metadata and
 });
 
 test("runner records failed calls and missing metadata as unknown, and requires LAB_KEY before file access", async (context) => {
-  environment(context, () => provider(overview({ questions: ["Did therapy help?", ...overview().questions.slice(1)] })));
+  environment(context, () => provider(overview({ portrait: "You attended therapy.", read: "You wrote about self-harm.", questions: ["Did therapy help?", ...overview().questions.slice(1)] })));
   const { readingsPath, recordPaths } = await fixture(context);
   for (const fetchImpl of [
     async () => { const result = await invoke(); return new Response(JSON.stringify(result.payload), { status: result.status }); },
