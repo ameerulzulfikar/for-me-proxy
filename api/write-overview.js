@@ -4,8 +4,10 @@ import { collectPartnerNames, hasCompleteTenderSection, verifyProse, verifyQuest
 
 // Lab-only writing pass. No app endpoint depends on this module.
 export const config = { maxDuration: 300 };
-export const WRITE_OVERVIEW_PROMPT_VERSION = "write-from-readings-v1";
+export const WRITE_OVERVIEW_PROMPT_VERSION = "write-from-readings-v2";
 const MODEL = "claude-sonnet-5";
+const CACHE_CONTROL = Object.freeze({ type: "ephemeral", ttl: "1h" });
+const PROMPT_LAYOUT = "readings-first-system-blocks-v1";
 const MAX_OUTPUT_TOKENS = 32_000;
 const PROVIDER_TIMEOUT_MS = 270_000;
 const MAX_READINGS = 3_000;
@@ -105,6 +107,21 @@ export function buildReadingsPrompt(readings) {
   ].join("\n");
 }
 
+export function buildWritingRequest(readingsText, instructions = systemPrompt) {
+  // Anthropic's prefix order is tools -> system blocks -> messages. Keep the
+  // tool schema fixed and put editable instructions AFTER the cache breakpoint.
+  // The readings remain source data, as the writing instructions specify.
+  return {
+    model: MODEL, max_tokens: MAX_OUTPUT_TOKENS,
+    system: [
+      { type: "text", text: readingsText, cache_control: CACHE_CONTROL },
+      { type: "text", text: instructions }
+    ],
+    tools: [overviewTool], tool_choice: { type: "tool", name: overviewTool.name },
+    messages: [{ role: "user", content: [{ type: "text", text: "Write the overview from the supplied readings using the tool." }] }]
+  };
+}
+
 function normalizeOverviewToolInput(value) {
   if (!isPlainObject(value)) return value;
   const keys = Object.keys(value);
@@ -201,9 +218,16 @@ export default async function handler(request, response) {
     response.setHeader("Allow", "POST");
     return sendJson(response, 405, { error: { type: "method_not_allowed", message: "Method not allowed" } });
   }
-  const recorder = createEvaluationRecorder({ promptVersion: WRITE_OVERVIEW_PROMPT_VERSION, systemPrompt, model: MODEL, maxTokens: MAX_OUTPUT_TOKENS, toolSchema: overviewTool });
+  const recorder = createEvaluationRecorder({ promptVersion: WRITE_OVERVIEW_PROMPT_VERSION, systemPrompt, model: MODEL, maxTokens: MAX_OUTPUT_TOKENS, toolSchema: overviewTool, cacheControl: CACHE_CONTROL });
   let screeningApplied = false;
-  const finish = (status, payload) => sendJson(response, status, { ...payload, evaluation: { ...recorder.snapshot(), screeningApplied } });
+  const finish = (status, payload) => {
+    const evaluation = recorder.snapshot();
+    return sendJson(response, status, { ...payload, evaluation: {
+      ...evaluation,
+      generation: { ...evaluation.generation, prompt_layout: PROMPT_LAYOUT },
+      screeningApplied
+    } });
+  };
   const fail = (status, type, message, extra = {}) => finish(status, { error: { type, message, ...extra } });
   let body;
   try { body = await readJsonBody(request); }
@@ -219,11 +243,7 @@ export default async function handler(request, response) {
       method: "POST",
       headers: { "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
       signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
-      body: JSON.stringify({
-        model: MODEL, max_tokens: MAX_OUTPUT_TOKENS,
-        system: systemPrompt, tools: [overviewTool], tool_choice: { type: "tool", name: overviewTool.name },
-        messages: [{ role: "user", content: [{ type: "text", text: userPrompt }] }]
-      })
+      body: JSON.stringify(buildWritingRequest(userPrompt))
     });
     const responseText = await upstream.text();
     recorder.rawModelResponse = responseText;

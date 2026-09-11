@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import handler, { buildReadingsPrompt, config, overviewTool, prepareReadings, systemPrompt, WRITE_OVERVIEW_PROMPT_VERSION } from "../api/write-overview.js";
+import handler, { buildReadingsPrompt, buildWritingRequest, config, overviewTool, prepareReadings, systemPrompt, WRITE_OVERVIEW_PROMPT_VERSION } from "../api/write-overview.js";
 import { parseArguments, runWritingOverview } from "./write-overview.mjs";
 import { formatGroupedRuns, loadRunRecords } from "./overview-records.mjs";
 
@@ -73,11 +73,16 @@ test("writer sends all readings once, chronologically, with original IDs and onl
   const body = JSON.parse(request.body);
   assert.equal(body.model, "claude-sonnet-5");
   assert.equal(body.max_tokens, 32000);
-  assert.equal(body.system, systemPrompt);
+  assert.equal(body.system.length, 2);
+  assert.equal(body.system[0].text, buildReadingsPrompt(prepareReadings(file)));
+  assert.deepEqual(body.system[0].cache_control, { type: "ephemeral", ttl: "1h" });
+  assert.deepEqual(body.system[1], { type: "text", text: systemPrompt });
   assert.deepEqual(body.tools, [overviewTool]);
   assert.equal(body.messages.length, 1);
   assert.equal(body.messages[0].content.length, 1);
-  const rows = body.messages[0].content[0].text.split("\n").slice(2).map((line) => JSON.parse(line));
+  assert.equal(body.messages[0].content[0].text, "Write the overview from the supplied readings using the tool.");
+  assert.equal((request.body.match(/cache_control/gu) || []).length, 1);
+  const rows = body.system[0].text.split("\n").slice(2).map((line) => JSON.parse(line));
   assert.deepEqual(rows.map((row) => row[0]), [reading().noteId, "a.md", "z.md"]);
   assert.deepEqual(rows[2].slice(4), ["someone_elses_words", "no", "low", ""]);
   assert.doesNotMatch(request.body, /ORIGINAL ARCHIVE TEXT|READER PROMPT|secretLedger|not-evidence/u);
@@ -85,7 +90,8 @@ test("writer sends all readings once, chronologically, with original IDs and onl
   assert.equal(result.payload.questions.length, 3);
   assert.equal(result.payload.tender, "");
   assert.equal(result.payload.evaluation.promptVersion, WRITE_OVERVIEW_PROMPT_VERSION);
-  assert.equal(result.payload.evaluation.generation.cache_control, null);
+  assert.deepEqual(result.payload.evaluation.generation.cache_control, { type: "ephemeral", ttl: "1h" });
+  assert.equal(result.payload.evaluation.generation.prompt_layout, "readings-first-system-blocks-v1");
   assert.equal(result.payload.evaluation.corpus.usedNoteCount, 3);
   assert.equal(result.payload.evaluation.costEstimate.totalUsd, 0.004);
   assert.equal(result.payload.evaluation.screeningApplied, true);
@@ -96,6 +102,56 @@ test("writer sends all readings once, chronologically, with original IDs and onl
   assert.match(systemPrompt, /Where the readings are thin on something, say less/u);
   assert.match(systemPrompt, /If you can't establish a count, don't state one/u);
   assert.match(systemPrompt, /including questions/u);
+});
+
+test("editing writing instructions preserves the cached prefix; changing readings changes it", () => {
+  const text = buildReadingsPrompt(prepareReadings([reading()]));
+  const before = buildWritingRequest(text);
+  const after = buildWritingRequest(text, `${systemPrompt}\nUse shorter sentences.`);
+  const changedReadings = buildWritingRequest(buildReadingsPrompt(prepareReadings([reading({ establishes: "You considered a different workshop." })])));
+  // Mirror the documented prefix boundary, including tools before system blocks.
+  const prefix = (request) => JSON.stringify({ model: request.model, tools: request.tools, system: request.system.slice(0, request.system.findIndex((block) => block.cache_control) + 1) });
+  assert.equal(prefix(before), prefix(after));
+  assert.notEqual(before.system[1].text, after.system[1].text);
+  assert.notEqual(prefix(before), prefix(changedReadings));
+  assert.equal(before.system[1].text, systemPrompt);
+  assert.deepEqual(before.tools, [overviewTool]);
+  assert.equal(before.system[1].cache_control, undefined);
+  assert.ok(before.messages.every((message) => message.content.every((block) => !block.cache_control)));
+});
+
+test("cold and warm usage survives screening, evaluation and saved records with one-hour accounting", async (context) => {
+  let usage;
+  environment(context, () => provider(overview({ questions: ["Did therapy help?", ...overview().questions.slice(1)] }), { usage }));
+  const { readingsPath, recordPaths } = await fixture(context);
+  const cases = [
+    // Omitted TTL breakdown must still be billed as a 1h write, not a 5m write.
+    [{ input_tokens: 2474, cache_creation_input_tokens: 155000, cache_read_input_tokens: 0, output_tokens: 2000 }, 0.644948],
+    [{ input_tokens: 2474, cache_creation_input_tokens: 155000, cache_read_input_tokens: 0, cache_creation: { ephemeral_1h_input_tokens: 155000, ephemeral_5m_input_tokens: 0 }, output_tokens: 2000 }, 0.644948],
+    [{ input_tokens: 2474, cache_creation_input_tokens: 0, cache_read_input_tokens: 155000, output_tokens: 2000 }, 0.055948]
+  ];
+  for (const [reportedUsage, expectedCost] of cases) {
+    usage = reportedUsage;
+    const { record, outputPath } = await runWritingOverview({ readingsPath }, {
+      recordPaths,
+      fetchImpl: async (_url, options) => {
+        const result = await invoke(JSON.parse(options.body));
+        assert.equal(result.status, 200);
+        assert.equal(result.payload.questions.length, 2);
+        assert.deepEqual(result.payload.usage, usage);
+        assert.deepEqual(result.payload.evaluation.usage, usage);
+        return new Response(JSON.stringify(result.payload), { status: result.status });
+      }
+    });
+    const saved = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.deepEqual(saved.usage, usage);
+    assert.deepEqual(saved.rawModelResponse.usage, usage);
+    assert.deepEqual(saved.finalScreenedResponse.usage, usage);
+    assert.equal(saved.costEstimate.totalUsd, expectedCost);
+    assert.equal(saved.costEstimate.totalInputTokens, 157474);
+    assert.equal(saved.costEstimate.breakdownUsd.cacheWrite5m, 0);
+    assert.deepEqual(record.generation.cache_control, { type: "ephemeral", ttl: "1h" });
+  }
 });
 
 test("input validation rejects bad evidence before provider calls and never silently drops readings", async (context) => {

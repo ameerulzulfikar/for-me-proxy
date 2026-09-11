@@ -131,6 +131,8 @@ export async function main(args = process.argv.slice(2)) {
     console.log(`\n${JSON.stringify(record.finalScreenedResponse, null, 2)}\n`);
     console.log(formatRunTable([record]));
     console.log(`Server latency: ${record.serverLatencyMs == null ? "unknown" : `${(record.serverLatencyMs / 1000).toFixed(2)}s`}`);
+    console.log(`Cache read tokens: ${record.usage?.cache_read_input_tokens ?? "unknown"}`);
+    console.log(`Cache write tokens (1h): ${record.usage?.cache_creation?.ephemeral_1h_input_tokens ?? record.usage?.cache_creation_input_tokens ?? "unknown"}`);
     console.log(`Usage: ${JSON.stringify(record.usage)}\nSaved to: ${outputPath}`);
     if (record.error) console.error(JSON.stringify(record.error));
     if (backlogWarning) console.error(`Backlog: ${backlogWarning}`);
